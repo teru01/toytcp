@@ -1,34 +1,43 @@
-use std::net::Ipv4Addr;
+use anyhow::{Context, Result};
+use pnet::packet::tcp::{self, MutableTcpPacket};
+use pnet::transport::{TransportReceiver, TransportSender};
+use std::fmt::{self, Display};
+use std::net::{IpAddr, Ipv4Addr};
 
-pub struct TCB {
-    pub src_addr: Ipv4Addr,
-    pub dst_addr: Ipv4Addr,
-    pub src_port: u16,
-    pub dst_port: u16,
-    pub send_param: SendParam,
-    pub recv_param: RecvParam,
-    pub status: TcpStatus,
-    pub send_buffer: Vec<u8>,
-    pub recv_buffer: Vec<u8>,
+const TCP_HEADER_SIZE: usize = 20;
+const TCP_DATA_OFFSET: u8 = 5;
+
+struct TCB {
+    src_addr: Ipv4Addr,
+    dest_addr: Ipv4Addr,
+    src_port: u16,
+    dest_port: u16,
+    send_param: SendParam,
+    recv_param: RecvParam,
+    status: TcpStatus,
+    send_buffer: Vec<u8>,
+    recv_buffer: Vec<u8>,
+    send_channel: TransportSender,
+    recv_channel: TransportReceiver,
 }
 
 #[derive(Clone, Debug)]
-pub struct SendParam {
-    pub unacked_seq: u32, //未ACK送信
-    pub next: u32,        //次の送信
-    pub window: u16,
-    pub initial_seq: u32, //初期送信seq
+struct SendParam {
+    unacked_seq: u32, //未ACK送信
+    next: u32,        //次の送信
+    window: u16,
+    initial_seq: u32, //初期送信seq
 }
 
 #[derive(Clone, Debug)]
-pub struct RecvParam {
-    pub next: u32,
-    pub window: u16,
-    pub initial_seq: u32, //初期受信seq
+struct RecvParam {
+    next: u32,
+    window: u16,
+    initial_seq: u32, //初期受信seq
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub enum TcpStatus {
+enum TcpStatus {
     Listen,
     SynSent,
     SynRecv,
@@ -57,5 +66,30 @@ impl Display for TcpStatus {
             TcpStatus::LastAck => write!(f, "LASTACK"),
             TcpStatus::Closed => write!(f, "CLOSED"),
         }
+    }
+}
+
+impl TCB {
+    fn send_segment(&mut self, seq: u32, ack: u32, flag: u16, payload: &[u8]) -> Result<usize> {
+        let mut tcp_buffer = vec![0; TCP_HEADER_SIZE + payload.len()];
+        let mut tcp_packet =
+            MutableTcpPacket::new(&mut tcp_buffer).context("failed to create packet")?;
+        tcp_packet.set_source(self.src_port);
+        tcp_packet.set_destination(self.dest_port);
+        tcp_packet.set_sequence(seq);
+        tcp_packet.set_acknowledgement(ack);
+        tcp_packet.set_data_offset(TCP_DATA_OFFSET);
+        tcp_packet.set_flags(flag);
+        tcp_packet.set_window(self.recv_param.window);
+        tcp_packet.set_payload(payload);
+        tcp_packet.set_checksum(tcp::ipv4_checksum(
+            &tcp_packet.to_immutable(),
+            &self.src_addr,
+            &self.dest_addr,
+        ));
+        let sent_size = self
+            .send_channel
+            .send_to(tcp_packet, IpAddr::V4(self.dest_addr))?;
+        Ok((sent_size))
     }
 }
