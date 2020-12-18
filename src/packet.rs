@@ -1,7 +1,9 @@
 use pnet::packet::Packet;
-
+use std::fmt::{self, Display};
 const TCP_HEADER_SIZE: usize = 20;
 const TCP_DATA_OFFSET: u8 = 5;
+
+#[derive(Clone, Debug)]
 pub struct TCPPacket {
     buffer: Vec<u8>,
 }
@@ -70,11 +72,11 @@ impl TCPPacket {
     }
 
     pub fn set_data_offset(&mut self, offset: u8) {
-        self.buffer[13] = offset << 4; // TODO bit order
+        self.buffer[12] = offset << 4; // TODO bit order
     }
 
     pub fn set_flag(&mut self, flag: u8) {
-        self.buffer[14] = flag;
+        self.buffer[13] = flag;
     }
 
     pub fn set_window_size(&mut self, window: u16) {
@@ -98,4 +100,38 @@ impl Packet for TCPPacket {
     fn payload(&self) -> &[u8] {
         &self.buffer[TCP_HEADER_SIZE..]
     }
+}
+
+impl Display for TCPPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            r"
+        src: {}
+        dst: {}
+        seq: {},
+        ack: {},
+        flag: {},
+        window_size: {},
+        checksum: {}",
+            self.get_src(),
+            self.get_dest(),
+            self.get_seq(),
+            self.get_ack(),
+            self.get_flag(),
+            self.get_window_size(),
+            self.get_checksum()
+        )
+    }
+}
+
+pub mod TCPFlags {
+    pub const CWR: u8 = 1 << 7;
+    pub const ECE: u8 = 1 << 6;
+    pub const URG: u8 = 1 << 5;
+    pub const ACK: u8 = 1 << 4;
+    pub const PSH: u8 = 1 << 3;
+    pub const RST: u8 = 1 << 2;
+    pub const SYN: u8 = 1 << 1;
+    pub const FIN: u8 = 1;
 }
