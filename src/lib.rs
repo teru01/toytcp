@@ -1,2 +1,2 @@
-mod packet;
+pub mod packet;
 pub mod tcp;
