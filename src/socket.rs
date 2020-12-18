@@ -14,11 +14,11 @@ use std::sync::{Arc, RwLock};
 const TCP_DATA_OFFSET: u8 = 5;
 
 // enum Socket {
-//     ListenSocket(TCB),
-//     ConnectionSocket(TCB),
+//     ListenSocket(Socket),
+//     ConnectionSocket(Socket),
 // }
 
-pub struct TCB {
+pub struct Socket {
     src_addr: Ipv4Addr,
     dest_addr: Ipv4Addr,
     src_port: u16,
@@ -29,8 +29,8 @@ pub struct TCB {
     send_buffer: Vec<u8>,
     recv_buffer: Vec<u8>,
     retransmission_map: HashMap<u32, RetransmissionHashEntry>,
-    synrecv_connection_queue: VecDeque<TCB>,
-    connected_connection_queue: VecDeque<TCB>,
+    synrecv_connection_queue: VecDeque<Socket>,
+    connected_connection_queue: VecDeque<Socket>,
 }
 
 #[derive(Clone)]
@@ -92,7 +92,7 @@ impl Display for TcpStatus {
     }
 }
 
-impl TCB {
+impl Socket {
     pub fn new(src_addr: Ipv4Addr, src_port: u16, status: TcpStatus) -> Result<Self> {
         Ok(Self {
             src_addr,
@@ -146,6 +146,4 @@ impl TCB {
             .insert(seq, RetransmissionHashEntry::new(tcp_packet));
         Ok(sent_size)
     }
-
-    // pub fn accept(&self) -> Result<TCB> {}
 }

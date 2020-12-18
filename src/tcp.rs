@@ -1,4 +1,4 @@
-use crate::tcb::{TcpStatus, TCB};
+use crate::socket::{Socket, TcpStatus};
 use anyhow::{Context, Result};
 use std::collections::{HashMap, VecDeque};
 use std::net::Ipv4Addr;
@@ -11,7 +11,7 @@ const UNDETERMINED_PORT: u16 = 0;
 pub struct SockID(Ipv4Addr, Ipv4Addr, u16, u16);
 
 pub struct TCP {
-    tcbs: RwLock<HashMap<SockID, TCB>>,
+    tcbs: RwLock<HashMap<SockID, Socket>>,
 }
 
 impl TCP {
@@ -22,9 +22,11 @@ impl TCP {
     }
 
     pub fn listen(&self, src_addr: Ipv4Addr, src_port: u16) -> Result<SockID> {
-        let tcb = TCB::new(src_addr, src_port, TcpStatus::Listen)?;
+        let tcb = Socket::new(src_addr, src_port, TcpStatus::Listen)?;
         let socket_id = SockID(src_addr, UNDETERMINED_IP_ADDR, src_port, UNDETERMINED_PORT);
         self.tcbs.write().unwrap().insert(socket_id, tcb);
         Ok(socket_id)
     }
+
+    // pub fn accept(&self, socket_id) -> Result<SockID> {}
 }

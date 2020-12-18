@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use toytcp::packet::tcpflags;
-use toytcp::tcb::TCB;
+use toytcp::tcb::Socket;
 use toytcp::tcp::TCP;
 
 fn main() -> Result<()> {
-    let mut tcb = TCB::new("127.0.0.1".parse().unwrap())?;
+    let mut tcb = Socket::new("127.0.0.1".parse().unwrap())?;
     let _ = tcb
         .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
         .context("send error")?;
@@ -16,7 +16,7 @@ fn serve() -> Result<()> {
     let tcp = Arc::new(TCP::new());
     let listening_socket = tcp.listen("127.0.0.1".parse().unwrap(), 40000)?;
     loop {
-        let (connected_socket, _) = tcp.accept(listening_socket)?;
+        let connected_socket = tcp.accept(listening_socket)?;
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
             let mut buffer = [0u8; 1024];
