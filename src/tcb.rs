@@ -12,6 +12,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 const TCP_DATA_OFFSET: u8 = 5;
 
+#[derive(Clone)]
 pub struct TCB {
     src_addr: Ipv4Addr,
     dest_addr: Ipv4Addr,
@@ -22,11 +23,10 @@ pub struct TCB {
     status: TcpStatus,
     send_buffer: Vec<u8>,
     recv_buffer: Vec<u8>,
-    send_channel: TransportSender,
-    recv_channel: TransportReceiver,
     retransmission_map: HashMap<u32, RetransmissionHashEntry>,
 }
 
+#[derive(Clone)]
 struct RetransmissionHashEntry {
     packet: TCPPacket,
 }
@@ -53,7 +53,7 @@ struct RecvParam {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-enum TcpStatus {
+pub enum TcpStatus {
     Listen,
     SynSent,
     SynRecv,
@@ -86,23 +86,17 @@ impl Display for TcpStatus {
 }
 
 impl TCB {
-    pub fn new(src_addr: Ipv4Addr) -> Result<Self> {
-        let (sender, receiver) = transport::transport_channel(
-            65535,
-            TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
-        )?;
+    pub fn new(src_addr: Ipv4Addr, src_port: u16, status: TcpStatus) -> Result<Self> {
         Ok(Self {
             src_addr,
             dest_addr: "127.0.0.1".parse().unwrap(),
-            src_port: u16::default(),
+            src_port,
             dest_port: u16::default(),
             send_param: SendParam::default(),
             recv_param: RecvParam::default(),
-            status: TcpStatus::Closed,
+            status,
             send_buffer: vec![0; 65535],
             recv_buffer: vec![0; 65535],
-            send_channel: sender,
-            recv_channel: receiver,
             retransmission_map: HashMap::new(),
         })
     }
@@ -131,8 +125,11 @@ impl TCB {
             &self.dest_addr,
             IpNextHeaderProtocols::Tcp,
         ));
-        let sent_size = self
-            .send_channel
+        let (mut sender, _) = transport::transport_channel(
+            65535,
+            TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
+        )?;
+        let sent_size = sender
             .send_to(tcp_packet.clone(), IpAddr::V4(self.dest_addr))
             .context(format!("failed to send: \n{}", tcp_packet))?;
 
