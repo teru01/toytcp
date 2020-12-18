@@ -1,13 +1,15 @@
-use anyhow::{Context, Result};
-use pnet::packet::tcp::{self, MutableTcpPacket};
+use anyhow::{Context, Error, Result};
+use pnet::packet::tcp::{self, MutableTcpPacket, TcpPacket};
+use pnet::packet::Packet;
 use pnet::transport::{TransportReceiver, TransportSender};
+use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
 
 const TCP_HEADER_SIZE: usize = 20;
 const TCP_DATA_OFFSET: u8 = 5;
 
-struct TCB {
+struct TCB<'a> {
     src_addr: Ipv4Addr,
     dest_addr: Ipv4Addr,
     src_port: u16,
@@ -19,6 +21,17 @@ struct TCB {
     recv_buffer: Vec<u8>,
     send_channel: TransportSender,
     recv_channel: TransportReceiver,
+    retransmission_map: HashMap<u32, RetransmissionHashEntry<'a>>,
+}
+
+struct RetransmissionHashEntry<'a> {
+    packet: TcpPacket<'a>,
+}
+
+impl<'a> RetransmissionHashEntry<'a> {
+    fn new(packet: TcpPacket<'a>) -> Self {
+        Self { packet }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -69,11 +82,11 @@ impl Display for TcpStatus {
     }
 }
 
-impl TCB {
-    fn send_segment(&mut self, seq: u32, ack: u32, flag: u16, payload: &[u8]) -> Result<usize> {
+impl<'a> TCB<'a> {
+    fn send_tcp_packet(&mut self, seq: u32, ack: u32, flag: u16, payload: &[u8]) -> Result<usize> {
         let mut tcp_buffer = vec![0; TCP_HEADER_SIZE + payload.len()];
         let mut tcp_packet =
-            MutableTcpPacket::new(&mut tcp_buffer).context("failed to create packet")?;
+            MutableTcpPacket::owned(tcp_buffer).context("failed to create packet")?;
         tcp_packet.set_source(self.src_port);
         tcp_packet.set_destination(self.dest_port);
         tcp_packet.set_sequence(seq);
@@ -87,9 +100,23 @@ impl TCB {
             &self.src_addr,
             &self.dest_addr,
         ));
-        let sent_size = self
-            .send_channel
-            .send_to(tcp_packet, IpAddr::V4(self.dest_addr))?;
+        let sent_size = self.send_to(&tcp_packet.to_immutable())?;
+        let t = TcpPacket::new(tcp_packet.packet());
+        self.retransmission_map.insert(
+            seq,
+            RetransmissionHashEntry::new(tcp_packet.consume_to_immutable()),
+        );
         Ok((sent_size))
+    }
+
+    // TCPパケットを送信
+    fn send_to(&mut self, packet: &TcpPacket) -> Result<usize> {
+        let packet_buf = packet.packet();
+        let mut buffer = vec![0; packet_buf.len()];
+        buffer.copy_from_slice(packet_buf);
+        let new_packet = TcpPacket::new(&buffer).context("failed to create new TCP packet")?;
+        self.send_channel
+            .send_to(new_packet, IpAddr::V4(self.dest_addr))
+            .map_err(|e| Error::new(e))
     }
 }
