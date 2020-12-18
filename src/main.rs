@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use toytcp::packet::TCPFlags;
-use toytcp::tcp::TCB;
+use toytcp::tcb::TCB;
 
 fn main() -> Result<()> {
     let mut tcb = TCB::new("127.0.0.1".parse().unwrap())?;
