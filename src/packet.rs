@@ -1,7 +1,6 @@
 use pnet::packet::Packet;
 use std::fmt::{self, Display};
 const TCP_HEADER_SIZE: usize = 20;
-const TCP_DATA_OFFSET: u8 = 5;
 
 #[derive(Clone, Debug)]
 pub struct TCPPacket {

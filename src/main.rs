@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use toytcp::packet::tcpflags;
 use toytcp::tcb::TCB;
 use toytcp::tcp::TCP;
@@ -12,20 +13,21 @@ fn main() -> Result<()> {
 }
 
 fn serve() -> Result<()> {
-    let tcp = TCP::new();
-    let listener = tcp.listen(40000)?;
+    let tcp = Arc::new(TCP::new());
+    let listening_socket = tcp.listen("127.0.0.1".parse().unwrap(), 40000)?;
     loop {
-        let (stream, _) = listener.accept()?;
+        let (connected_socket, _) = tcp.accept(listening_socket)?;
+        let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
             let mut buffer = [0u8; 1024];
             loop {
-                let nbytes = stream.read(&mut buffer)?;
+                let nbytes = cloned_tcp.read(connected_socket, &mut buffer)?;
                 if nbytes == 0 {
                     debug!("Connection closed.");
                     return Ok(());
                 }
                 print!("{}", str::from_utf8(&buffer[..nbytes])?);
-                stream.write_all(&buffer[..nbytes])?;
+                cloned_tcp.write(connected_socket, &buffer[..nbytes])?;
             }
         })
     }

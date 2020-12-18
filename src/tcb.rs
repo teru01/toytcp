@@ -6,13 +6,18 @@ use pnet::transport::{
     self, TransportChannelType, TransportProtocol, TransportReceiver, TransportSender,
 };
 use pnet::util;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Arc, RwLock};
 
 const TCP_DATA_OFFSET: u8 = 5;
 
-#[derive(Clone)]
+// enum Socket {
+//     ListenSocket(TCB),
+//     ConnectionSocket(TCB),
+// }
+
 pub struct TCB {
     src_addr: Ipv4Addr,
     dest_addr: Ipv4Addr,
@@ -24,6 +29,8 @@ pub struct TCB {
     send_buffer: Vec<u8>,
     recv_buffer: Vec<u8>,
     retransmission_map: HashMap<u32, RetransmissionHashEntry>,
+    synrecv_connection_queue: VecDeque<TCB>,
+    connected_connection_queue: VecDeque<TCB>,
 }
 
 #[derive(Clone)]
@@ -98,6 +105,8 @@ impl TCB {
             send_buffer: vec![0; 65535],
             recv_buffer: vec![0; 65535],
             retransmission_map: HashMap::new(),
+            synrecv_connection_queue: VecDeque::new(),
+            connected_connection_queue: VecDeque::new(),
         })
     }
 
@@ -137,4 +146,6 @@ impl TCB {
             .insert(seq, RetransmissionHashEntry::new(tcp_packet));
         Ok(sent_size)
     }
+
+    // pub fn accept(&self) -> Result<TCB> {}
 }
