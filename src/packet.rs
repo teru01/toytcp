@@ -125,7 +125,7 @@ impl Display for TCPPacket {
     }
 }
 
-pub mod TCPFlags {
+pub mod tcpflags {
     pub const CWR: u8 = 1 << 7;
     pub const ECE: u8 = 1 << 6;
     pub const URG: u8 = 1 << 5;

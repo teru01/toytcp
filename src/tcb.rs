@@ -1,7 +1,6 @@
 use crate::packet::TCPPacket;
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::tcp::{self, MutableTcpPacket, TcpPacket};
 use pnet::packet::Packet;
 use pnet::transport::{
     self, TransportChannelType, TransportProtocol, TransportReceiver, TransportSender,
@@ -11,7 +10,6 @@ use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
 
-const TCP_HEADER_SIZE: usize = 20;
 const TCP_DATA_OFFSET: u8 = 5;
 
 pub struct TCB {
