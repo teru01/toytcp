@@ -23,24 +23,23 @@ pub struct SockID(Ipv4Addr, Ipv4Addr, u16, u16);
 pub struct TCP {
     sockets: RwLock<HashMap<SockID, Socket>>,
     // locker: Arc<CondMutex>
-    // event_channel: (Sender<TCPEvent>, Receiver<TCPEvent>),
-}
-
-enum TCPEvent {
-    ConnectionCompleted,
+    // event_channel: Arc<Receiver<TCPEvent>>,
 }
 
 impl TCP {
     pub fn new() -> Arc<Self> {
-        let (sender, reciever) = mpsc::channel();
+        // let (sender, reciever) = mpsc::channel();
+        let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
-            sockets: RwLock::new(HashMap::new()),
-            // event_channel: (s, r),
+            sockets, // event_channel: Arc::new(reciever),
         });
         let cloned_tcp = tcp.clone();
+        // let cloned_sockets = sockets.clone();
         std::thread::spawn(move || {
-            cloned_tcp.receive_handler(sender);
+            // 受信スレッドではtableとsenderに触りたい
+            cloned_tcp.receive_handler();
         });
+        // ハンドラスレッドではtableとreceiverに触りたい
         tcp
     }
 
@@ -86,8 +85,7 @@ impl TCP {
         //  send SYN
         unimplemented!()
     }
-
-    fn receive_handler(&self, sender: Sender<Socket>) -> Result<()> {
+    fn receive_handler(&self) -> Result<()> {
         // recv
         // look sock_id
         // s = table.write().get(sock_id) or self.pair.clone()
@@ -107,3 +105,26 @@ impl TCP {
         }
     }
 }
+
+// fn receive_handler(
+//     sockets: Arc<RwLock<HashMap<SockID, Socket>>>,
+//     sender: Sender<TCPEvent>,
+// ) -> Result<()> {
+//     // recv
+//     // look sock_id
+//     // s = table.write().get(sock_id) or self.pair.clone()
+//     //
+//     dbg!("begin recv thread");
+//     let (mut sender, mut receiver) = transport::transport_channel(
+//         65535,
+//         TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
+//     )?; // TODO FIX
+//     let mut packet_iter = transport::tcp_packet_iter(&mut receiver);
+//     loop {
+//         let (packet, src_addr) = packet_iter.next()?;
+//         let src_addr = match src_addr {
+//             IpAddr::V4(addr) => addr,
+//             _ => continue,
+//         };
+//     }
+// }

@@ -5,10 +5,10 @@ use toytcp::socket::Socket;
 use toytcp::tcp::TCP;
 
 fn main() -> Result<()> {
-    let mut socket = Socket::new("127.0.0.1".parse().unwrap())?;
-    let _ = socket
-        .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
-        .context("send error")?;
+    // let mut socket = Socket::new("127.0.0.1".parse().unwrap())?;
+    // let _ = socket
+    //     .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
+    //     .context("send error")?;
     Ok(())
 }
 
@@ -19,21 +19,22 @@ fn serve() -> Result<()> {
         let connected_socket = tcp.accept(listening_socket)?;
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
-            let mut buffer = [0u8; 1024];
-            loop {
-                let nbytes = cloned_tcp.read(connected_socket, &mut buffer)?;
-                if nbytes == 0 {
-                    debug!("Connection closed.");
-                    return Ok(());
-                }
-                print!("{}", str::from_utf8(&buffer[..nbytes])?);
-                cloned_tcp.write(connected_socket, &buffer[..nbytes])?;
-            }
-        })
+            cloned_tcp
+            // let mut buffer = [0u8; 1024];
+            // loop {
+            //     let nbytes = cloned_tcp.read(connected_socket, &mut buffer)?;
+            //     if nbytes == 0 {
+            //         dbg!("Connection closed.");
+            //         return Ok(());
+            //     }
+            //     print!("{}", str::from_utf8(&buffer[..nbytes])?);
+            //     cloned_tcp.write(connected_socket, &buffer[..nbytes])?;
+            // }
+        });
     }
 }
 
-fn connect() -> Result<()> {}
+// fn connect() -> Result<()> {}
 
 // pub fn serve(address: &str) -> Result<(), failure::Error> {
 //     let listener = TcpListener::bind(address)?; /* [1] */

@@ -11,7 +11,7 @@ use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{
     mpsc::{self, Receiver, Sender},
-    Arc, RwLock,
+    Arc, Mutex, RwLock,
 };
 
 const TCP_DATA_OFFSET: u8 = 5;
@@ -34,6 +34,10 @@ pub struct Socket {
     retransmission_map: HashMap<u32, RetransmissionHashEntry>,
     pub synrecv_connection_channel: VecDeque<Socket>,
     pub connected_connection_channel: VecDeque<Socket>,
+    pub event_channel: (Mutex<Sender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
+}
+pub enum TCPEvent {
+    ConnectionCompleted,
 }
 
 #[derive(Clone)]
@@ -97,6 +101,7 @@ impl Display for TcpStatus {
 
 impl Socket {
     pub fn new(src_addr: Ipv4Addr, src_port: u16, status: TcpStatus) -> Result<Self> {
+        let (s, r) = mpsc::channel();
         Ok(Self {
             src_addr,
             dest_addr: "127.0.0.1".parse().unwrap(),
@@ -110,6 +115,7 @@ impl Socket {
             retransmission_map: HashMap::new(),
             synrecv_connection_channel: VecDeque::new(),
             connected_connection_channel: VecDeque::new(),
+            event_channel: (Mutex::new(s), Mutex::new(r)),
         })
     }
 
