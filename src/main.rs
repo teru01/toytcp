@@ -15,7 +15,8 @@ fn main() -> Result<()> {
 
 fn serve() -> Result<()> {
     let tcp = TCP::new();
-    let listening_socket = tcp.listen("192.168.69.100".parse().unwrap(), 40000)?;
+    let listening_socket = tcp.listen("127.0.0.1".parse().unwrap(), 40000)?;
+    // let listening_socket = tcp.listen("192.168.69.100".parse().unwrap(), 40000)?;
     dbg!("listening..");
     loop {
         let connected_socket = tcp.accept(listening_socket)?;

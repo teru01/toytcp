@@ -31,7 +31,8 @@ impl TCP {
         let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
             sockets, // event_channel: Arc::new(reciever),
-            my_ip: "192.168.69.100".parse().unwrap(),
+            my_ip: "127.0.0.1".parse().unwrap(),
+            // my_ip: "192.168.69.100".parse().unwrap(),
             event_cond: (Mutex::new(None), Condvar::new()),
         });
         let cloned_tcp = tcp.clone();
@@ -46,16 +47,17 @@ impl TCP {
 
     /// リスニングソケットを生成してIDを返す
     pub fn listen(&self, local_addr: Ipv4Addr, local_port: u16) -> Result<SockID> {
-        let socket = Socket::new(local_addr, local_port, TcpStatus::Listen)?;
-        let socket_id = SockID(
+        let socket = Socket::new(
             local_addr,
             UNDETERMINED_IP_ADDR,
             local_port,
             UNDETERMINED_PORT,
-        );
+            TcpStatus::Listen,
+        )?;
         let mut lock = self.sockets.write().unwrap();
-        lock.insert(socket_id, socket);
-        Ok(socket_id)
+        let sock_id = socket.get_sock_id();
+        lock.insert(sock_id, socket);
+        Ok(sock_id)
     }
 
     /// 接続済みソケットが生成されるまで待機し，されたらそのIDを返す
@@ -74,10 +76,14 @@ impl TCP {
             dbg!("in loop");
             event = cvar.wait(event).unwrap();
         }
+        *event = None;
         drop(event);
 
         let mut table = self.sockets.write().unwrap();
-
+        dbg!(socket_id);
+        for k in table.keys() {
+            dbg!(k);
+        }
         Ok(table
             .get_mut(&socket_id)
             .unwrap()
@@ -138,7 +144,8 @@ impl TCP {
                 IpAddr::V4(addr) => addr,
                 _ => continue,
             };
-            if !(remote_addr == "192.168.69.100".parse::<Ipv4Addr>().unwrap()
+            if !(remote_addr == "127.0.0.1".parse::<Ipv4Addr>().unwrap()
+            // if !(remote_addr == "192.168.69.101".parse::<Ipv4Addr>().unwrap()
                 && packet.get_dest() == 40000)
             {
                 continue;
@@ -152,19 +159,25 @@ impl TCP {
                 packet.get_dest(),
                 packet.get_src(),
             )) {
-                Some(socket) => socket, // 接続済みソケット
+                Some(socket) => {
+                    dbg!("connected socket", socket.get_sock_id());
+                    socket // 接続済みソケット
+                }
                 None => match table.get_mut(&SockID(
                     self.my_ip,
                     UNDETERMINED_IP_ADDR,
                     packet.get_dest(),
                     UNDETERMINED_PORT,
                 )) {
-                    Some(socket) => socket, // リスニングソケット
+                    Some(socket) => {
+                        dbg!("listening socket", socket.get_sock_id());
+                        socket
+                    } // リスニングソケット
                     None => {
                         unimplemented!();
                     }
                 }, // return RST
-                                         // unimplemented!();
+                   // unimplemented!();
             };
             // dbg!("socket found: {:?}", &socket);
             // checksum, ack検証
@@ -176,10 +189,13 @@ impl TCP {
                     // check RST
                     // check ACK
                     if packet.get_flag() & tcpflags::SYN > 0 {
-                        let mut connection_socket =
-                            Socket::new(socket.local_addr, socket.local_port, TcpStatus::SynRcvd)?;
-                        connection_socket.remote_addr = remote_addr;
-                        connection_socket.remote_port = packet.get_src();
+                        let mut connection_socket = Socket::new(
+                            socket.local_addr,
+                            remote_addr,
+                            socket.local_port,
+                            packet.get_src(),
+                            TcpStatus::SynRcvd,
+                        )?;
                         connection_socket.recv_param.next = packet.get_seq() + 1;
                         connection_socket.recv_param.initial_seq = packet.get_seq();
                         connection_socket.send_param.initial_seq = 443322; // TODO random
@@ -194,6 +210,7 @@ impl TCP {
                         connection_socket.send_param.unacked_seq =
                             connection_socket.send_param.initial_seq;
                         connection_socket.listening_socket = Some(socket.get_sock_id());
+                        dbg!(socket.get_sock_id());
                         dbg!("status: listen → synrcvd");
                         table.insert(connection_socket.get_sock_id(), connection_socket);
                     }
@@ -210,18 +227,24 @@ impl TCP {
                             socket.send_param.unacked_seq = packet.get_ack();
                             socket.status = TcpStatus::Established;
                             let connection_sock_id = socket.get_sock_id();
+                            dbg!("1");
                             if let Some(id) = socket.listening_socket {
-                                let ls = table
-                                    .get_mut(&id)
-                                    .context("parent listenign socket not found")?;
+                                dbg!(id);
+                                let ls = table.get_mut(&id).unwrap();
+                                dbg!("2");
                                 ls.connected_connection_queue.push_back(connection_sock_id);
                                 let (lock, cvar) = &self.event_cond;
+                                dbg!("before");
                                 let mut ready = lock.lock().unwrap();
                                 *ready = Some(ls.get_sock_id());
                                 cvar.notify_one();
                             }
                             dbg!("status: synrcvd → established");
+                        } else {
+                            dbg!("invalid params");
                         }
+                    } else {
+                        dbg!("unexpected flag");
                     }
                 }
                 _ => unimplemented!(),

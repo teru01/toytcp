@@ -108,15 +108,25 @@ impl Display for TcpStatus {
 }
 
 impl Socket {
-    pub fn new(local_addr: Ipv4Addr, local_port: u16, status: TcpStatus) -> Result<Self> {
+    pub fn new(
+        local_addr: Ipv4Addr,
+        remote_addr: Ipv4Addr,
+        local_port: u16,
+        remote_port: u16,
+        status: TcpStatus,
+    ) -> Result<Self> {
         let (s, r) = mpsc::sync_channel(CHANNEL_BOUND);
         Ok(Self {
             local_addr,
-            remote_addr: "127.0.0.1".parse().unwrap(),
+            remote_addr: remote_addr,
             local_port,
-            remote_port: u16::default(),
+            remote_port: remote_port,
             send_param: SendParam::default(),
-            recv_param: RecvParam::default(),
+            recv_param: RecvParam {
+                initial_seq: 0,
+                next: 0,
+                window: 1024,
+            },
             status,
             send_buffer: vec![0; 65535],
             recv_buffer: vec![0; 65535],
@@ -144,7 +154,7 @@ impl Socket {
         tcp_packet.set_flag(flag);
         tcp_packet.set_window_size(self.recv_param.window);
         tcp_packet.set_payload(payload);
-        tcp_packet.set_reserved(2);
+        // tcp_packet.set_reserved(2);
         tcp_packet.set_checksum(util::ipv4_checksum(
             &tcp_packet.packet(),
             8,
@@ -161,7 +171,7 @@ impl Socket {
             .send_to(tcp_packet.clone(), IpAddr::V4(self.remote_addr))
             .context(format!("failed to send: \n{}", tcp_packet))?;
 
-        dbg!("tcp packet send", &tcp_packet);
+        // dbg!("tcp packet send", &tcp_packet);
         self.retransmission_map
             .insert(seq, RetransmissionHashEntry::new(tcp_packet));
         Ok(sent_size)
