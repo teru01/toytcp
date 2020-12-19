@@ -132,6 +132,7 @@ impl TCP {
             // checksum, ack検証
             if let Err(e) = match socket.status {
                 TcpStatus::Listen => self.listen_handler(&packet, socket, src_addr),
+                // TcpStatus::SynRcvd => self.synrcvd_handler(),
                 _ => unimplemented!(),
             } {
                 dbg!("error, {}", e);
@@ -142,12 +143,23 @@ impl TCP {
     fn listen_handler(
         &self,
         packet: &TCPPacket,
-        socket: &mut Socket,
+        listening_socket: &mut Socket,
         src_addr: Ipv4Addr,
     ) -> Result<()> {
         // check RST
         // check ACK
         if packet.get_flag() & tcpflags::SYN > 0 {
+            let mut socket = Socket::new(
+                listening_socket.src_addr,
+                listening_socket.src_port,
+                TcpStatus::SynRcvd,
+            )?;
+            let socket_id = SockID(
+                listening_socket.src_addr,
+                src_addr,
+                listening_socket.src_port,
+                packet.get_src(),
+            );
             socket.dest_addr = src_addr;
             socket.dest_port = packet.get_dest();
             socket.recv_param.next = packet.get_seq() + 1;
@@ -161,8 +173,14 @@ impl TCP {
             )?;
             socket.send_param.next = socket.send_param.initial_seq + 1;
             socket.send_param.unacked_seq = socket.send_param.initial_seq;
-            socket.status = TcpStatus::SynRecv;
+            self.sockets.write().unwrap().insert(socket_id, socket);
         }
+        Ok(())
+    }
+
+    fn synrcvd_handler(&self, packet: &TCPPacket, socket: &mut Socket) -> Result<()> {
+        // check RST
+        if packet.get_flag() & tcpflags::ACK > 0 {}
         Ok(())
     }
 }

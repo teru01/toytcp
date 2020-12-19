@@ -33,7 +33,7 @@ pub struct Socket {
     pub send_buffer: Vec<u8>,
     pub recv_buffer: Vec<u8>,
     retransmission_map: HashMap<u32, RetransmissionHashEntry>,
-    pub synrecv_connection_channel: VecDeque<Socket>,
+    pub synrecv_connection_channel: VecDeque<Socket>, // いらない
     pub connected_connection_channel: VecDeque<Socket>,
     pub event_channel: (Mutex<Sender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
 }
@@ -71,7 +71,7 @@ pub struct RecvParam {
 pub enum TcpStatus {
     Listen,
     SynSent,
-    SynRecv,
+    SynRcvd,
     Established,
     FinWait1,
     FinWait2,
@@ -87,7 +87,7 @@ impl Display for TcpStatus {
         match self {
             TcpStatus::Listen => write!(f, "LISTEN"),
             TcpStatus::SynSent => write!(f, "SYNSENT"),
-            TcpStatus::SynRecv => write!(f, "SYNRECV"),
+            TcpStatus::SynRcvd => write!(f, "SynRcvd"),
             TcpStatus::Established => write!(f, "ESTABLISHED"),
             TcpStatus::FinWait1 => write!(f, "FINWAIT1"),
             TcpStatus::FinWait2 => write!(f, "FINWAIT2"),
