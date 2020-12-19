@@ -1,3 +1,4 @@
+use crate::packet::{tcpflags, TCPPacket};
 use crate::socket::{Socket, TcpStatus};
 use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -24,6 +25,7 @@ pub struct TCP {
     sockets: RwLock<HashMap<SockID, Socket>>,
     // locker: Arc<CondMutex>
     // event_channel: Arc<Receiver<TCPEvent>>,
+    my_ip: Ipv4Addr,
 }
 
 impl TCP {
@@ -32,6 +34,7 @@ impl TCP {
         let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
             sockets, // event_channel: Arc::new(reciever),
+            my_ip: "127.0.0.1".parse().unwrap(),
         });
         let cloned_tcp = tcp.clone();
         // let cloned_sockets = sockets.clone();
@@ -98,11 +101,69 @@ impl TCP {
         let mut packet_iter = transport::tcp_packet_iter(&mut receiver);
         loop {
             let (packet, src_addr) = packet_iter.next()?;
+            let packet = TCPPacket::from(packet);
+            // let packet = translate_packet()
             let src_addr = match src_addr {
                 IpAddr::V4(addr) => addr,
                 _ => continue,
             };
+            let mut table = self.sockets.write().unwrap();
+            let socket = match table.get_mut(&SockID(
+                self.my_ip,
+                src_addr,
+                packet.get_dest(),
+                packet.get_src(),
+            )) {
+                Some(socket) => socket, // 接続済みソケット
+                None => match table.get_mut(&SockID(
+                    self.my_ip,
+                    UNDETERMINED_IP_ADDR,
+                    packet.get_dest(),
+                    UNDETERMINED_PORT,
+                )) {
+                    Some(socket) => socket, // リスニングソケット
+                    None => {
+                        unimplemented!();
+                    }
+                }, // return RST
+                                         // unimplemented!();
+            };
+            dbg!("socket found: {:?}", &socket);
+            // checksum, ack検証
+            if let Err(e) = match socket.status {
+                TcpStatus::Listen => self.listen_handler(&packet, socket, src_addr),
+                _ => unimplemented!(),
+            } {
+                dbg!("error, {}", e);
+            }
         }
+    }
+
+    fn listen_handler(
+        &self,
+        packet: &TCPPacket,
+        socket: &mut Socket,
+        src_addr: Ipv4Addr,
+    ) -> Result<()> {
+        // check RST
+        // check ACK
+        if packet.get_flag() & tcpflags::SYN > 0 {
+            socket.dest_addr = src_addr;
+            socket.dest_port = packet.get_dest();
+            socket.recv_param.next = packet.get_seq() + 1;
+            socket.recv_param.initial_seq = packet.get_seq();
+            socket.send_param.initial_seq = 443322; // TODO random
+            socket.send_tcp_packet(
+                socket.send_param.initial_seq,
+                socket.recv_param.next,
+                tcpflags::SYN | tcpflags::ACK,
+                &[],
+            )?;
+            socket.send_param.next = socket.send_param.initial_seq + 1;
+            socket.send_param.unacked_seq = socket.send_param.initial_seq;
+            socket.status = TcpStatus::SynRecv;
+        }
+        Ok(())
     }
 }
 

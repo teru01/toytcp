@@ -21,13 +21,14 @@ const TCP_DATA_OFFSET: u8 = 5;
 //     ConnectionSocket(Socket),
 // }
 
+#[derive(Debug)]
 pub struct Socket {
     pub src_addr: Ipv4Addr,
     pub dest_addr: Ipv4Addr,
     pub src_port: u16,
     pub dest_port: u16,
-    send_param: SendParam,
-    recv_param: RecvParam,
+    pub send_param: SendParam,
+    pub recv_param: RecvParam,
     pub status: TcpStatus,
     pub send_buffer: Vec<u8>,
     pub recv_buffer: Vec<u8>,
@@ -40,7 +41,7 @@ pub enum TCPEvent {
     ConnectionCompleted,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RetransmissionHashEntry {
     packet: TCPPacket,
 }
@@ -52,18 +53,18 @@ impl RetransmissionHashEntry {
 }
 
 #[derive(Clone, Debug, Default)]
-struct SendParam {
-    unacked_seq: u32, //未ACK送信
-    next: u32,        //次の送信
-    window: u16,
-    initial_seq: u32, //初期送信seq
+pub struct SendParam {
+    pub unacked_seq: u32, //未ACK送信
+    pub next: u32,        //次の送信
+    pub window: u16,
+    pub initial_seq: u32, //初期送信seq
 }
 
 #[derive(Clone, Debug, Default)]
-struct RecvParam {
-    next: u32,
-    window: u16,
-    initial_seq: u32, //初期受信seq
+pub struct RecvParam {
+    pub next: u32,
+    pub window: u16,
+    pub initial_seq: u32, //初期受信seq
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]

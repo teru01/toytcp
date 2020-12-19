@@ -1,4 +1,4 @@
-use pnet::packet::Packet;
+use pnet::packet::{tcp::TcpPacket, Packet};
 use std::fmt::{self, Display};
 const TCP_HEADER_SIZE: usize = 20;
 
@@ -121,6 +121,14 @@ impl Display for TCPPacket {
             self.get_window_size(),
             self.get_checksum()
         )
+    }
+}
+
+impl<'a> From<TcpPacket<'a>> for TCPPacket {
+    fn from(packet: TcpPacket) -> Self {
+        Self {
+            buffer: packet.packet().to_vec(),
+        }
     }
 }
 
