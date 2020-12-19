@@ -20,6 +20,9 @@ const TCP_DATA_OFFSET: u8 = 5;
 //     ListenSocket(Socket),
 //     ConnectionSocket(Socket),
 // }
+// srcIP, destIP, srcPort, destPort
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
+pub struct SockID(pub Ipv4Addr, pub Ipv4Addr, pub u16, pub u16);
 
 #[derive(Debug)]
 pub struct Socket {
@@ -34,9 +37,10 @@ pub struct Socket {
     pub recv_buffer: Vec<u8>,
     retransmission_map: HashMap<u32, RetransmissionHashEntry>,
     pub synrecv_connection_channel: VecDeque<Socket>, // いらない
-    pub connected_connection_channel: VecDeque<Socket>,
+    pub connected_connection_queue: VecDeque<SockID>,
     pub event_channel: (Mutex<Sender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
 }
+
 pub enum TCPEvent {
     ConnectionCompleted,
 }
@@ -115,7 +119,7 @@ impl Socket {
             recv_buffer: vec![0; 65535],
             retransmission_map: HashMap::new(),
             synrecv_connection_channel: VecDeque::new(),
-            connected_connection_channel: VecDeque::new(),
+            connected_connection_queue: VecDeque::new(),
             event_channel: (Mutex::new(s), Mutex::new(r)),
         })
     }
@@ -155,5 +159,14 @@ impl Socket {
         self.retransmission_map
             .insert(seq, RetransmissionHashEntry::new(tcp_packet));
         Ok(sent_size)
+    }
+
+    pub fn get_sock_id(&self) -> SockID {
+        SockID(
+            self.local_addr,
+            self.remote_addr,
+            self.src_port,
+            self.dest_port,
+        )
     }
 }

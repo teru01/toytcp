@@ -1,5 +1,5 @@
 use crate::packet::{tcpflags, TCPPacket};
-use crate::socket::{Socket, TcpStatus};
+use crate::socket::{SockID, Socket, TCPEvent, TcpStatus};
 use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::Packet;
@@ -14,10 +14,6 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
-
-// srcIP, destIP, srcPort, destPort
-#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
-pub struct SockID(Ipv4Addr, Ipv4Addr, u16, u16);
 
 // type CondMutex = (Mutex<bool>, Condvar);
 
@@ -159,12 +155,6 @@ impl TCP {
                 listening_socket.src_port,
                 TcpStatus::SynRcvd,
             )?;
-            let socket_id = SockID(
-                listening_socket.local_addr,
-                remote_addr,
-                listening_socket.src_port,
-                packet.get_src(),
-            );
             socket.remote_addr = remote_addr;
             socket.dest_port = packet.get_dest();
             socket.recv_param.next = packet.get_seq() + 1;
@@ -178,14 +168,40 @@ impl TCP {
             )?;
             socket.send_param.next = socket.send_param.initial_seq + 1;
             socket.send_param.unacked_seq = socket.send_param.initial_seq;
-            self.sockets.write().unwrap().insert(socket_id, socket);
+            self.sockets.write().unwrap().insert(
+                SockID(
+                    listening_socket.local_addr,
+                    remote_addr,
+                    listening_socket.src_port,
+                    packet.get_src(),
+                ),
+                socket,
+            );
         }
         Ok(())
     }
 
     fn synrcvd_handler(&self, packet: &TCPPacket, socket: &mut Socket) -> Result<()> {
         // check RST
-        if packet.get_flag() & tcpflags::ACK > 0 {}
+        // check SYN
+        if packet.get_flag() & tcpflags::ACK > 0 {
+            if socket.send_param.unacked_seq <= packet.get_ack()
+                && packet.get_ack() <= socket.send_param.next
+            {
+                socket.recv_param.next = packet.get_seq();
+                socket.send_param.unacked_seq = packet.get_ack();
+                socket.status = TcpStatus::Established;
+                socket
+                    .connected_connection_queue
+                    .push_back(socket.get_sock_id());
+                socket
+                    .event_channel
+                    .0
+                    .lock()
+                    .unwrap()
+                    .send(TCPEvent::ConnectionCompleted)?; // ブロックさせてはダメ
+            }
+        }
         Ok(())
     }
 }
