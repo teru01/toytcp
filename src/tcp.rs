@@ -43,12 +43,12 @@ impl TCP {
     }
 
     /// リスニングソケットを生成してIDを返す
-    pub fn listen(&self, local_addr: Ipv4Addr, src_port: u16) -> Result<SockID> {
-        let socket = Socket::new(local_addr, src_port, TcpStatus::Listen)?;
+    pub fn listen(&self, local_addr: Ipv4Addr, local_port: u16) -> Result<SockID> {
+        let socket = Socket::new(local_addr, local_port, TcpStatus::Listen)?;
         let socket_id = SockID(
             local_addr,
             UNDETERMINED_IP_ADDR,
-            src_port,
+            local_port,
             UNDETERMINED_PORT,
         );
         self.sockets.write().unwrap().insert(socket_id, socket);
@@ -90,10 +90,6 @@ impl TCP {
         unimplemented!()
     }
     fn receive_handler(&self) -> Result<()> {
-        // recv
-        // look sock_id
-        // s = table.write().get(sock_id) or self.pair.clone()
-        //
         dbg!("begin recv thread");
         let (mut sender, mut receiver) = transport::transport_channel(
             65535,
@@ -133,7 +129,7 @@ impl TCP {
             // checksum, ack検証
             if let Err(e) = match socket.status {
                 TcpStatus::Listen => self.listen_handler(&packet, socket, remote_addr),
-                // TcpStatus::SynRcvd => self.synrcvd_handler(),
+                TcpStatus::SynRcvd => self.synrcvd_handler(&packet, socket),
                 _ => unimplemented!(),
             } {
                 dbg!("error, {}", e);
@@ -152,11 +148,11 @@ impl TCP {
         if packet.get_flag() & tcpflags::SYN > 0 {
             let mut socket = Socket::new(
                 listening_socket.local_addr,
-                listening_socket.src_port,
+                listening_socket.local_port,
                 TcpStatus::SynRcvd,
             )?;
             socket.remote_addr = remote_addr;
-            socket.dest_port = packet.get_dest();
+            socket.remote_port = packet.get_src();
             socket.recv_param.next = packet.get_seq() + 1;
             socket.recv_param.initial_seq = packet.get_seq();
             socket.send_param.initial_seq = 443322; // TODO random
@@ -168,15 +164,10 @@ impl TCP {
             )?;
             socket.send_param.next = socket.send_param.initial_seq + 1;
             socket.send_param.unacked_seq = socket.send_param.initial_seq;
-            self.sockets.write().unwrap().insert(
-                SockID(
-                    listening_socket.local_addr,
-                    remote_addr,
-                    listening_socket.src_port,
-                    packet.get_src(),
-                ),
-                socket,
-            );
+            self.sockets
+                .write()
+                .unwrap()
+                .insert(socket.get_sock_id(), socket); // デッドロックする？
         }
         Ok(())
     }

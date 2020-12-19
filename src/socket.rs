@@ -29,8 +29,8 @@ pub struct SockID(pub Ipv4Addr, pub Ipv4Addr, pub u16, pub u16);
 pub struct Socket {
     pub local_addr: Ipv4Addr,
     pub remote_addr: Ipv4Addr,
-    pub src_port: u16,
-    pub dest_port: u16,
+    pub local_port: u16,
+    pub remote_port: u16,
     pub send_param: SendParam,
     pub recv_param: RecvParam,
     pub status: TcpStatus,
@@ -106,13 +106,13 @@ impl Display for TcpStatus {
 }
 
 impl Socket {
-    pub fn new(local_addr: Ipv4Addr, src_port: u16, status: TcpStatus) -> Result<Self> {
+    pub fn new(local_addr: Ipv4Addr, local_port: u16, status: TcpStatus) -> Result<Self> {
         let (s, r) = mpsc::sync_channel(CHANNEL_BOUND);
         Ok(Self {
             local_addr,
             remote_addr: "127.0.0.1".parse().unwrap(),
-            src_port,
-            dest_port: u16::default(),
+            local_port,
+            remote_port: u16::default(),
             send_param: SendParam::default(),
             recv_param: RecvParam::default(),
             status,
@@ -133,8 +133,8 @@ impl Socket {
         payload: &[u8],
     ) -> Result<usize> {
         let mut tcp_packet = TCPPacket::new();
-        tcp_packet.set_src(self.src_port);
-        tcp_packet.set_dest(self.dest_port);
+        tcp_packet.set_src(self.local_port);
+        tcp_packet.set_dest(self.remote_port);
         tcp_packet.set_seq(seq);
         tcp_packet.set_ack(ack);
         tcp_packet.set_data_offset(TCP_DATA_OFFSET);
@@ -166,8 +166,8 @@ impl Socket {
         SockID(
             self.local_addr,
             self.remote_addr,
-            self.src_port,
-            self.dest_port,
+            self.local_port,
+            self.remote_port,
         )
     }
 }
