@@ -9,6 +9,7 @@ fn main() -> Result<()> {
     // let _ = socket
     //     .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
     //     .context("send error")?;
+    serve()?;
     Ok(())
 }
 
@@ -17,6 +18,7 @@ fn serve() -> Result<()> {
     let listening_socket = tcp.listen("127.0.0.1".parse().unwrap(), 40000)?;
     loop {
         let connected_socket = tcp.accept(listening_socket)?;
+        dbg!("accepted!", connected_socket.1, connected_socket.3);
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
             cloned_tcp

@@ -11,7 +11,7 @@ use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{
     mpsc::{self, Receiver, Sender, SyncSender},
-    Arc, Mutex, RwLock,
+    Arc, Condvar, Mutex, RwLock,
 };
 
 const TCP_DATA_OFFSET: u8 = 5;
@@ -40,8 +40,11 @@ pub struct Socket {
     pub synrecv_connection_channel: VecDeque<Socket>, // いらない
     pub connected_connection_queue: VecDeque<SockID>,
     pub event_channel: (Mutex<SyncSender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
+    pub event_cond: (Mutex<bool>, Condvar),
+    pub listening_socket: Option<SockID>, // どのリスニングソケットから生まれたか？
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum TCPEvent {
     ConnectionCompleted,
 }
@@ -122,6 +125,8 @@ impl Socket {
             synrecv_connection_channel: VecDeque::new(),
             connected_connection_queue: VecDeque::new(),
             event_channel: (Mutex::new(s), Mutex::new(r)),
+            event_cond: (Mutex::new(false), Condvar::new()),
+            listening_socket: None,
         })
     }
 
