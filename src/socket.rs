@@ -40,7 +40,6 @@ pub struct Socket {
     pub synrecv_connection_channel: VecDeque<Socket>, // いらない
     pub connected_connection_queue: VecDeque<SockID>,
     pub event_channel: (Mutex<SyncSender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
-    pub event_cond: (Mutex<bool>, Condvar),
     pub listening_socket: Option<SockID>, // どのリスニングソケットから生まれたか？
 }
 
@@ -125,7 +124,6 @@ impl Socket {
             synrecv_connection_channel: VecDeque::new(),
             connected_connection_queue: VecDeque::new(),
             event_channel: (Mutex::new(s), Mutex::new(r)),
-            event_cond: (Mutex::new(false), Condvar::new()),
             listening_socket: None,
         })
     }
@@ -146,6 +144,7 @@ impl Socket {
         tcp_packet.set_flag(flag);
         tcp_packet.set_window_size(self.recv_param.window);
         tcp_packet.set_payload(payload);
+        tcp_packet.set_reserved(2);
         tcp_packet.set_checksum(util::ipv4_checksum(
             &tcp_packet.packet(),
             8,
@@ -162,6 +161,7 @@ impl Socket {
             .send_to(tcp_packet.clone(), IpAddr::V4(self.remote_addr))
             .context(format!("failed to send: \n{}", tcp_packet))?;
 
+        dbg!("tcp packet send", &tcp_packet);
         self.retransmission_map
             .insert(seq, RetransmissionHashEntry::new(tcp_packet));
         Ok(sent_size)

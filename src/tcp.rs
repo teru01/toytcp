@@ -22,6 +22,7 @@ pub struct TCP {
     // locker: Arc<CondMutex>
     // event_channel: Arc<Receiver<TCPEvent>>,
     my_ip: Ipv4Addr,
+    pub event_cond: (Mutex<Option<SockID>>, Condvar),
 }
 
 impl TCP {
@@ -30,7 +31,8 @@ impl TCP {
         let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
             sockets, // event_channel: Arc::new(reciever),
-            my_ip: "127.0.0.1".parse().unwrap(),
+            my_ip: "192.168.69.100".parse().unwrap(),
+            event_cond: (Mutex::new(None), Condvar::new()),
         });
         let cloned_tcp = tcp.clone();
         // let cloned_sockets = sockets.clone();
@@ -62,17 +64,23 @@ impl TCP {
     pub fn accept(&self, socket_id: SockID) -> Result<SockID> {
         // チャネルを使えばいい感じになると思ったが，リードロックをとってしまっているので他スレッドが書き込めない
         // チャネルをTCPに持たせて，そのタイミングでロック取れば．．？
-        let mut table_lock = self.sockets.write().unwrap();
-        let listening_socket = table_lock
-            .get_mut(&socket_id)
-            .context("no such listening socket")?;
-        let (lock, cvar) = &listening_socket.event_cond;
+        let (lock, cvar) = &self.event_cond;
         // drop(table_lock);
-        let mut started = lock.lock().unwrap();
-        while !*started {
-            started = cvar.wait(started).unwrap();
+        let mut event = lock.lock().unwrap();
+        while event.is_none() || event.is_some() && event.unwrap() != socket_id {
+            // イベントが来てない or 来てたとしても関係ないなら待機
+            // cvarに通知が来るまでeventをunlockする
+            // 通知が来たらlockをとってリターン
+            dbg!("in loop");
+            event = cvar.wait(event).unwrap();
         }
-        Ok(listening_socket
+        drop(event);
+
+        let mut table = self.sockets.write().unwrap();
+
+        Ok(table
+            .get_mut(&socket_id)
+            .unwrap()
             .connected_connection_queue
             .pop_front()
             .context("no connected socket")?)
@@ -130,7 +138,7 @@ impl TCP {
                 IpAddr::V4(addr) => addr,
                 _ => continue,
             };
-            if !(remote_addr == "127.0.0.1".parse::<Ipv4Addr>().unwrap()
+            if !(remote_addr == "192.168.69.100".parse::<Ipv4Addr>().unwrap()
                 && packet.get_dest() == 40000)
             {
                 continue;
@@ -158,7 +166,7 @@ impl TCP {
                 }, // return RST
                                          // unimplemented!();
             };
-            dbg!("socket found: {:?}", &socket);
+            // dbg!("socket found: {:?}", &socket);
             // checksum, ack検証
 
             // ホントはちゃんとエラー処理
@@ -207,9 +215,9 @@ impl TCP {
                                     .get_mut(&id)
                                     .context("parent listenign socket not found")?;
                                 ls.connected_connection_queue.push_back(connection_sock_id);
-                                let (lock, cvar) = &ls.event_cond;
+                                let (lock, cvar) = &self.event_cond;
                                 let mut ready = lock.lock().unwrap();
-                                *ready = true;
+                                *ready = Some(ls.get_sock_id());
                                 cvar.notify_one();
                             }
                             dbg!("status: synrcvd → established");
