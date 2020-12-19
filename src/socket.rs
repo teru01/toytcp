@@ -10,11 +10,12 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, Receiver, Sender, SyncSender},
     Arc, Mutex, RwLock,
 };
 
 const TCP_DATA_OFFSET: u8 = 5;
+const CHANNEL_BOUND: usize = 65535;
 
 // enum Socket {
 //     ListenSocket(Socket),
@@ -38,7 +39,7 @@ pub struct Socket {
     retransmission_map: HashMap<u32, RetransmissionHashEntry>,
     pub synrecv_connection_channel: VecDeque<Socket>, // いらない
     pub connected_connection_queue: VecDeque<SockID>,
-    pub event_channel: (Mutex<Sender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
+    pub event_channel: (Mutex<SyncSender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
 }
 
 pub enum TCPEvent {
@@ -106,7 +107,7 @@ impl Display for TcpStatus {
 
 impl Socket {
     pub fn new(local_addr: Ipv4Addr, src_port: u16, status: TcpStatus) -> Result<Self> {
-        let (s, r) = mpsc::channel();
+        let (s, r) = mpsc::sync_channel(CHANNEL_BOUND);
         Ok(Self {
             local_addr,
             remote_addr: "127.0.0.1".parse().unwrap(),

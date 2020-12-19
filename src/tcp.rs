@@ -199,7 +199,7 @@ impl TCP {
                     .0
                     .lock()
                     .unwrap()
-                    .send(TCPEvent::ConnectionCompleted)?; // ブロックさせてはダメ
+                    .send(TCPEvent::ConnectionCompleted)?; // ブロックさせてはダメ．容量を持つ
             }
         }
         Ok(())
