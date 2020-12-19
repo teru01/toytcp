@@ -47,9 +47,14 @@ impl TCP {
     }
 
     /// リスニングソケットを生成してIDを返す
-    pub fn listen(&self, src_addr: Ipv4Addr, src_port: u16) -> Result<SockID> {
-        let socket = Socket::new(src_addr, src_port, TcpStatus::Listen)?;
-        let socket_id = SockID(src_addr, UNDETERMINED_IP_ADDR, src_port, UNDETERMINED_PORT);
+    pub fn listen(&self, local_addr: Ipv4Addr, src_port: u16) -> Result<SockID> {
+        let socket = Socket::new(local_addr, src_port, TcpStatus::Listen)?;
+        let socket_id = SockID(
+            local_addr,
+            UNDETERMINED_IP_ADDR,
+            src_port,
+            UNDETERMINED_PORT,
+        );
         self.sockets.write().unwrap().insert(socket_id, socket);
         Ok(socket_id)
     }
@@ -100,17 +105,17 @@ impl TCP {
         )?; // TODO FIX
         let mut packet_iter = transport::tcp_packet_iter(&mut receiver);
         loop {
-            let (packet, src_addr) = packet_iter.next()?;
+            let (packet, remote_addr) = packet_iter.next()?;
             let packet = TCPPacket::from(packet);
             // let packet = translate_packet()
-            let src_addr = match src_addr {
+            let remote_addr = match remote_addr {
                 IpAddr::V4(addr) => addr,
                 _ => continue,
             };
             let mut table = self.sockets.write().unwrap();
             let socket = match table.get_mut(&SockID(
                 self.my_ip,
-                src_addr,
+                remote_addr,
                 packet.get_dest(),
                 packet.get_src(),
             )) {
@@ -131,7 +136,7 @@ impl TCP {
             dbg!("socket found: {:?}", &socket);
             // checksum, ack検証
             if let Err(e) = match socket.status {
-                TcpStatus::Listen => self.listen_handler(&packet, socket, src_addr),
+                TcpStatus::Listen => self.listen_handler(&packet, socket, remote_addr),
                 // TcpStatus::SynRcvd => self.synrcvd_handler(),
                 _ => unimplemented!(),
             } {
@@ -144,23 +149,23 @@ impl TCP {
         &self,
         packet: &TCPPacket,
         listening_socket: &mut Socket,
-        src_addr: Ipv4Addr,
+        remote_addr: Ipv4Addr,
     ) -> Result<()> {
         // check RST
         // check ACK
         if packet.get_flag() & tcpflags::SYN > 0 {
             let mut socket = Socket::new(
-                listening_socket.src_addr,
+                listening_socket.local_addr,
                 listening_socket.src_port,
                 TcpStatus::SynRcvd,
             )?;
             let socket_id = SockID(
-                listening_socket.src_addr,
-                src_addr,
+                listening_socket.local_addr,
+                remote_addr,
                 listening_socket.src_port,
                 packet.get_src(),
             );
-            socket.dest_addr = src_addr;
+            socket.remote_addr = remote_addr;
             socket.dest_port = packet.get_dest();
             socket.recv_param.next = packet.get_seq() + 1;
             socket.recv_param.initial_seq = packet.get_seq();

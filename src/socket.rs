@@ -23,8 +23,8 @@ const TCP_DATA_OFFSET: u8 = 5;
 
 #[derive(Debug)]
 pub struct Socket {
-    pub src_addr: Ipv4Addr,
-    pub dest_addr: Ipv4Addr,
+    pub local_addr: Ipv4Addr,
+    pub remote_addr: Ipv4Addr,
     pub src_port: u16,
     pub dest_port: u16,
     pub send_param: SendParam,
@@ -101,11 +101,11 @@ impl Display for TcpStatus {
 }
 
 impl Socket {
-    pub fn new(src_addr: Ipv4Addr, src_port: u16, status: TcpStatus) -> Result<Self> {
+    pub fn new(local_addr: Ipv4Addr, src_port: u16, status: TcpStatus) -> Result<Self> {
         let (s, r) = mpsc::channel();
         Ok(Self {
-            src_addr,
-            dest_addr: "127.0.0.1".parse().unwrap(),
+            local_addr,
+            remote_addr: "127.0.0.1".parse().unwrap(),
             src_port,
             dest_port: u16::default(),
             send_param: SendParam::default(),
@@ -140,8 +140,8 @@ impl Socket {
             &tcp_packet.packet(),
             8,
             &[],
-            &self.src_addr,
-            &self.dest_addr,
+            &self.local_addr,
+            &self.remote_addr,
             IpNextHeaderProtocols::Tcp,
         ));
         let (mut sender, _) = transport::transport_channel(
@@ -149,7 +149,7 @@ impl Socket {
             TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
         )?; // TODO FIX
         let sent_size = sender
-            .send_to(tcp_packet.clone(), IpAddr::V4(self.dest_addr))
+            .send_to(tcp_packet.clone(), IpAddr::V4(self.remote_addr))
             .context(format!("failed to send: \n{}", tcp_packet))?;
 
         self.retransmission_map
