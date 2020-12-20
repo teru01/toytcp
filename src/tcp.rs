@@ -101,7 +101,7 @@ impl TCP {
         //  send SYN
         let local_port = 54321;
         let mut socket = Socket::new(MY_IPADDR, addr, local_port, port, TcpStatus::SynSent);
-        socket.send_param.initial_seq = 334433; // TODO random
+        socket.send_param.initial_seq = 12433; // TODO random
         socket.recv_param.window = WINDOW_SIZE;
         socket.send_tcp_packet(socket.send_param.initial_seq, 0, tcpflags::SYN, &[])?;
         socket.send_param.unacked_seq = socket.send_param.initial_seq;
@@ -126,10 +126,12 @@ impl TCP {
         let (mut sender, mut receiver) = transport::transport_channel(
             65535,
             TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
-        )?; // TODO FIX
+        )
+        .unwrap(); // TODO FIX
         let mut packet_iter = transport::tcp_packet_iter(&mut receiver);
         loop {
-            let (packet, remote_addr) = packet_iter.next()?;
+            // TODO: 最初にCtrl-C検出して受信スレッド終了処理したい
+            let (packet, remote_addr) = packet_iter.next()?; // TODO handling
             let packet = TCPPacket::from(packet);
             let remote_addr = match remote_addr {
                 IpAddr::V4(addr) => addr,
@@ -169,7 +171,7 @@ impl TCP {
                    // unimplemented!();
             };
             // checksum, ack検証
-
+            let sock_id = socket.get_sock_id();
             // ホントはちゃんとエラー処理
             match socket.status {
                 TcpStatus::Listen => {
@@ -187,18 +189,20 @@ impl TCP {
                         connection_socket.recv_param.next = packet.get_seq() + 1;
                         connection_socket.recv_param.initial_seq = packet.get_seq();
                         connection_socket.send_param.initial_seq = 443322; // TODO random
-                        connection_socket.send_tcp_packet(
-                            connection_socket.send_param.initial_seq,
-                            connection_socket.recv_param.next,
-                            tcpflags::SYN | tcpflags::ACK,
-                            &[],
-                        )?;
+                        connection_socket
+                            .send_tcp_packet(
+                                connection_socket.send_param.initial_seq,
+                                connection_socket.recv_param.next,
+                                tcpflags::SYN | tcpflags::ACK,
+                                &[],
+                            )
+                            .unwrap(); // TODO retry
                         connection_socket.send_param.next =
                             connection_socket.send_param.initial_seq + 1;
                         connection_socket.send_param.unacked_seq =
                             connection_socket.send_param.initial_seq;
-                        connection_socket.listening_socket = Some(socket.get_sock_id());
-                        dbg!(socket.get_sock_id());
+                        connection_socket.listening_socket = Some(sock_id);
+                        dbg!(sock_id);
                         dbg!("status: listen → synrcvd");
                         table.insert(connection_socket.get_sock_id(), connection_socket);
                     }
@@ -214,10 +218,9 @@ impl TCP {
                             socket.recv_param.next = packet.get_seq();
                             socket.send_param.unacked_seq = packet.get_ack();
                             socket.status = TcpStatus::Established;
-                            let connection_sock_id = socket.get_sock_id();
                             if let Some(id) = socket.listening_socket {
                                 let ls = table.get_mut(&id).unwrap();
-                                ls.connected_connection_queue.push_back(connection_sock_id);
+                                ls.connected_connection_queue.push_back(sock_id);
                                 let (lock, cvar) = &self.event_cond;
                                 let mut ready = lock.lock().unwrap();
                                 *ready = Some(ls.get_sock_id());
@@ -229,6 +232,41 @@ impl TCP {
                         }
                     } else {
                         dbg!("unexpected flag");
+                    }
+                }
+                TcpStatus::SynSent => {
+                    dbg!("synsend handler");
+                    if packet.get_flag() & tcpflags::ACK > 0 {
+                        if socket.send_param.unacked_seq <= packet.get_ack()
+                            && packet.get_ack() <= socket.send_param.next
+                        {
+                            if packet.get_flag() & tcpflags::RST > 0 {
+                                drop(socket); // tableの&mutを得るためdropする必要がある
+                                table.remove(&sock_id);
+                                continue;
+                            }
+                            if packet.get_flag() & tcpflags::SYN > 0 {
+                                socket.recv_param.next = packet.get_seq() + 1;
+                                socket.recv_param.initial_seq = packet.get_seq();
+                                socket.send_param.unacked_seq = packet.get_ack();
+                                if socket.send_param.unacked_seq > socket.send_param.initial_seq {
+                                    socket
+                                        .send_tcp_packet(
+                                            socket.send_param.next,
+                                            socket.recv_param.next,
+                                            tcpflags::ACK,
+                                            &[],
+                                        )
+                                        .unwrap(); // TODO
+                                    socket.status = TcpStatus::Established;
+                                    dbg!("status: SynSend → Established");
+                                } else {
+                                    // to SYNRCVD
+                                }
+                            }
+                        } else {
+                            dbg!("invalid ack number");
+                        }
                     }
                 }
                 _ => unimplemented!(),

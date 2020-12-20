@@ -9,7 +9,8 @@ fn main() -> Result<()> {
     // let _ = socket
     //     .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
     //     .context("send error")?;
-    serve()?;
+    // serve()?;
+    connect()?;
     Ok(())
 }
 
@@ -38,7 +39,11 @@ fn serve() -> Result<()> {
     }
 }
 
-// fn connect() -> Result<()> {}
+fn connect() -> Result<()> {
+    let tcp = TCP::new();
+    tcp.connect("10.0.1.1".parse().unwrap(), 33333)?;
+    Ok(())
+}
 
 // pub fn serve(address: &str) -> Result<(), failure::Error> {
 //     let listener = TcpListener::bind(address)?; /* [1] */

@@ -177,6 +177,25 @@ impl Socket {
         Ok(sent_size)
     }
 
+    // pub fn send_until(
+    //     &mut self,
+    //     max: usize,
+    //     seq: u32,
+    //     ack: u32,
+    //     flag: u8,
+    //     payload: &[u8],
+    // ) -> Result<()> {
+    //     let mut n = 0;
+    //     while let Err(e) = self.send_tcp_packet(seq, ack, flag, payload).as_ref() {
+    //         dbg!(e);
+    //         n += 1;
+    //         if n >= max {
+    //             return Err(*e);
+    //         }
+    //     }
+    //     Ok(())
+    // }
+
     pub fn get_sock_id(&self) -> SockID {
         SockID(
             self.local_addr,
