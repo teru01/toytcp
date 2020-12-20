@@ -64,52 +64,24 @@ impl TCP {
     /// コネクション確立キューにエントリが入るまでブロック
     /// エントリはrecvスレッドがいれる
     pub fn accept(&self, socket_id: SockID) -> Result<SockID> {
-        // チャネルを使えばいい感じになると思ったが，リードロックをとってしまっているので他スレッドが書き込めない
-        // チャネルをTCPに持たせて，そのタイミングでロック取れば．．？
         let (lock, cvar) = &self.event_cond;
-        // drop(table_lock);
         let mut event = lock.lock().unwrap();
         while event.is_none() || event.is_some() && event.unwrap() != socket_id {
             // イベントが来てない or 来てたとしても関係ないなら待機
             // cvarに通知が来るまでeventをunlockする
             // 通知が来たらlockをとってリターン
-            dbg!("in loop");
             event = cvar.wait(event).unwrap();
+            dbg!("wake up");
         }
         *event = None;
-        drop(event);
 
         let mut table = self.sockets.write().unwrap();
-        dbg!(socket_id);
-        for k in table.keys() {
-            dbg!(k);
-        }
         Ok(table
             .get_mut(&socket_id)
             .unwrap()
             .connected_connection_queue
             .pop_front()
             .context("no connected socket")?)
-        // if listening_socket
-        //     .event_channel
-        //     .1
-        //     .lock()
-        //     .unwrap()
-        //     .recv()
-        //     .context("sender dropped")?
-        //     == TCPEvent::ConnectionCompleted
-        // {
-        //     dbg!("recved esatblished event");
-        //     let sock_id = listening_socket
-        //         .connected_connection_queue
-        //         .pop_front()
-        //         .context("no established socket")?;
-        //     Ok(sock_id)
-        // } else {
-        //     anyhow::bail!("unexpected event");
-        // }
-
-        // unimplemented!()
     }
 
     /// ターゲットに接続し，接続済みソケットのIDを返す
@@ -127,8 +99,10 @@ impl TCP {
         // time up
         //
         //  send SYN
+        // let socket = Socket::new(local_addr, addr, local_port, port, status: TcpStatus);
         unimplemented!()
     }
+
     fn receive_handler(&self) -> Result<()> {
         dbg!("begin recv thread");
         let (mut sender, mut receiver) = transport::transport_channel(
@@ -227,14 +201,10 @@ impl TCP {
                             socket.send_param.unacked_seq = packet.get_ack();
                             socket.status = TcpStatus::Established;
                             let connection_sock_id = socket.get_sock_id();
-                            dbg!("1");
                             if let Some(id) = socket.listening_socket {
-                                dbg!(id);
                                 let ls = table.get_mut(&id).unwrap();
-                                dbg!("2");
                                 ls.connected_connection_queue.push_back(connection_sock_id);
                                 let (lock, cvar) = &self.event_cond;
-                                dbg!("before");
                                 let mut ready = lock.lock().unwrap();
                                 *ready = Some(ls.get_sock_id());
                                 cvar.notify_one();
