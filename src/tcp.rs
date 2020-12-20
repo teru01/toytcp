@@ -7,6 +7,7 @@ use pnet::transport::{
     self, TransportChannelType, TransportProtocol, TransportReceiver, TransportSender,
 };
 use pnet::util;
+use rand::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -99,9 +100,11 @@ impl TCP {
         // time up
         //
         //  send SYN
-        let local_port = 54321;
+        let mut rng = rand::thread_rng();
+        let local_port = rng.gen_range(40000..60000);
         let mut socket = Socket::new(MY_IPADDR, addr, local_port, port, TcpStatus::SynSent);
-        socket.send_param.initial_seq = 12433; // TODO random
+        let iss = rng.gen_range(1..1 << 31);
+        socket.send_param.initial_seq = iss; // ランダムにしないと，2回目以降SYNが返ってこなくなる（ACKだけ）
         socket.recv_param.window = WINDOW_SIZE;
         socket.send_tcp_packet(socket.send_param.initial_seq, 0, tcpflags::SYN, &[])?;
         socket.send_param.unacked_seq = socket.send_param.initial_seq;
