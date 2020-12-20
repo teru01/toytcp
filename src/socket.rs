@@ -114,9 +114,9 @@ impl Socket {
         local_port: u16,
         remote_port: u16,
         status: TcpStatus,
-    ) -> Result<Self> {
+    ) -> Self {
         let (s, r) = mpsc::sync_channel(CHANNEL_BOUND);
-        Ok(Self {
+        Self {
             local_addr,
             remote_addr: remote_addr,
             local_port,
@@ -135,7 +135,7 @@ impl Socket {
             connected_connection_queue: VecDeque::new(),
             event_channel: (Mutex::new(s), Mutex::new(r)),
             listening_socket: None,
-        })
+        }
     }
 
     pub fn send_tcp_packet(
