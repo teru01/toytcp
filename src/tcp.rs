@@ -17,6 +17,9 @@ const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
 const WINDOW_SIZE: u16 = 65535;
 use crate::MY_IPADDR;
+const MAX_RETRANSMITTION: u8 = 3;
+const RETRANSMITTION_TIMEOUT: u64 = 3;
+use std::time::{Duration, SystemTime};
 
 // type CondMutex = (Mutex<bool>, Condvar);
 
@@ -42,8 +45,65 @@ impl TCP {
             // 受信スレッドではtableとsenderに触りたい
             cloned_tcp.receive_handler();
         });
+        let cloned_tcp = tcp.clone();
+        std::thread::spawn(move || {
+            cloned_tcp.timer();
+        });
         // ハンドラスレッドではtableとreceiverに触りたい
         tcp
+    }
+
+    // タイマースレッド用
+    // 全てのソケットの再送キューを見て，タイムアウトしているパケットを再送する
+    fn timer(&self) {
+        loop {
+            let mut table = self.sockets.write().unwrap();
+            for (_, socket) in table.iter_mut() {
+                // let iter = v.retransmission_queue.iter_mut().peekable();
+                // loop {
+                //     if let Some(entry) = iter.peek()
+                // }
+                while let Some(mut item) = socket.retransmission_queue.pop_front() {
+                    if socket.send_param.unacked_seq > item.packet.get_seq() {
+                        // ackされてる
+                        dbg!("successfully acked", item.packet.get_seq());
+                        continue;
+                    }
+                    // タイムアウトを確認
+                    if item.latest_transmission_time.elapsed().unwrap()
+                        < Duration::from_secs(RETRANSMITTION_TIMEOUT)
+                    {
+                        // 取り出したエントリがタイムアウトしてないなら，キューの以降のエントリもタイムアウトしてない
+                        // 先頭に戻す
+                        socket.retransmission_queue.push_front(item);
+                        continue;
+                    }
+                    // ackされてなければ再送
+                    if item.transmission_count < MAX_RETRANSMITTION {
+                        // 再送
+                        let (mut sender, _) = transport::transport_channel(
+                            65535,
+                            TransportChannelType::Layer4(TransportProtocol::Ipv4(
+                                IpNextHeaderProtocols::Tcp,
+                            )),
+                        )
+                        .unwrap(); // TODO FIX
+                        dbg!("retransmit", item.packet.get_seq());
+                        let sent_size = sender
+                            .send_to(item.packet.clone(), IpAddr::V4(socket.remote_addr))
+                            .context(format!("failed to retransmit"))
+                            .unwrap();
+                        item.transmission_count += 1;
+                        item.latest_transmission_time = SystemTime::now();
+                        socket.retransmission_queue.push_back(item);
+                    } else {
+                        dbg!("reached MAX_RETRANSMITTION");
+                    }
+                }
+            }
+            drop(table);
+            thread::sleep(Duration::from_millis(500));
+        }
     }
 
     /// リスニングソケットを生成してIDを返す

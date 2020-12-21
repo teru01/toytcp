@@ -1,4 +1,4 @@
-use crate::packet::TCPPacket;
+use crate::packet::{tcpflags, TCPPacket};
 use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::Packet;
@@ -13,6 +13,7 @@ use std::sync::{
     mpsc::{self, Receiver, Sender, SyncSender},
     Arc, Condvar, Mutex, RwLock,
 };
+use std::time::SystemTime;
 
 const TCP_DATA_OFFSET: u8 = 5;
 const CHANNEL_BOUND: usize = 65535;
@@ -36,7 +37,7 @@ pub struct Socket {
     pub status: TcpStatus,
     pub send_buffer: Vec<u8>,
     pub recv_buffer: Vec<u8>,
-    retransmission_map: HashMap<u32, RetransmissionHashEntry>,
+    pub retransmission_queue: VecDeque<RetransmissionQueueEntry>,
     pub synrecv_connection_channel: VecDeque<Socket>, // いらない
     pub connected_connection_queue: VecDeque<SockID>,
     pub event_channel: (Mutex<SyncSender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
@@ -49,13 +50,19 @@ pub enum TCPEvent {
 }
 
 #[derive(Clone, Debug)]
-struct RetransmissionHashEntry {
-    packet: TCPPacket,
+pub struct RetransmissionQueueEntry {
+    pub packet: TCPPacket,
+    pub latest_transmission_time: SystemTime,
+    pub transmission_count: u8,
 }
 
-impl RetransmissionHashEntry {
+impl RetransmissionQueueEntry {
     fn new(packet: TCPPacket) -> Self {
-        Self { packet }
+        Self {
+            packet,
+            latest_transmission_time: SystemTime::now(),
+            transmission_count: 1,
+        }
     }
 }
 
@@ -130,7 +137,7 @@ impl Socket {
             status,
             send_buffer: vec![0; 65535],
             recv_buffer: vec![0; 65535],
-            retransmission_map: HashMap::new(),
+            retransmission_queue: VecDeque::new(),
             synrecv_connection_channel: VecDeque::new(),
             connected_connection_queue: VecDeque::new(),
             event_channel: (Mutex::new(s), Mutex::new(r)),
@@ -172,8 +179,10 @@ impl Socket {
             .context(format!("failed to send: \n{}", tcp_packet))?;
 
         // dbg!("tcp packet send", &tcp_packet);
-        self.retransmission_map
-            .insert(seq, RetransmissionHashEntry::new(tcp_packet));
+        if tcp_packet.get_flag() != tcpflags::ACK {
+            self.retransmission_queue
+                .push_back(RetransmissionQueueEntry::new(tcp_packet));
+        }
         Ok(sent_size)
     }
 
