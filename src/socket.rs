@@ -17,7 +17,7 @@ use std::time::SystemTime;
 
 const TCP_DATA_OFFSET: u8 = 5;
 const CHANNEL_BOUND: usize = 1 << 16;
-const SOCKET_BUFFER_SIZE: usize = 1 << 16;
+const SOCKET_BUFFER_SIZE: usize = 50000;
 
 // enum Socket {
 //     ListenSocket(Socket),
@@ -133,7 +133,7 @@ impl Socket {
             recv_param: RecvParam {
                 initial_seq: 0,
                 next: 0,
-                window: (SOCKET_BUFFER_SIZE - 1) as u16,
+                window: SOCKET_BUFFER_SIZE as u16,
             },
             status,
             send_buffer: vec![0; SOCKET_BUFFER_SIZE],

@@ -19,6 +19,7 @@ const WINDOW_SIZE: u16 = 65535;
 use crate::MY_IPADDR;
 const MAX_RETRANSMITTION: u8 = 3;
 const RETRANSMITTION_TIMEOUT: u64 = 3;
+use std::cmp;
 use std::time::{Duration, SystemTime};
 
 pub struct TCP {
@@ -131,7 +132,6 @@ impl TCP {
         let mut socket = Socket::new(MY_IPADDR, addr, local_port, port, TcpStatus::SynSent);
         let iss = rng.gen_range(1..1 << 31);
         socket.send_param.initial_seq = iss; // ランダムにしないと，2回目以降SYNが返ってこなくなる（ACKだけ）
-        socket.recv_param.window = WINDOW_SIZE;
         socket.send_tcp_packet(socket.send_param.initial_seq, 0, tcpflags::SYN, &[])?;
         socket.send_param.unacked_seq = socket.send_param.initial_seq;
         socket.send_param.next = socket.send_param.initial_seq + 1;
@@ -145,15 +145,19 @@ impl TCP {
     }
 
     // セグメントが到着次第(バッファに1バイト以上入り次第)すぐにreturnする
-    pub fn recv(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
+    pub fn receive(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
         self.wait_event(sock_id);
         // 受信バッファ-受信ウィンドウ=データ量が入っている
         let mut table = self.sockets.write().unwrap();
-        let mut socket = table
+        let socket = table
             .get_mut(&sock_id)
             .context(format!("no such socket: {:?}", sock_id))?;
         let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
-        buffer.copy_from_slice(&socket.recv_buffer[..received_size]);
+        let copy_size = cmp::min(buffer.len(), received_size);
+        buffer[..copy_size].copy_from_slice(&socket.recv_buffer[..copy_size]);
+        socket.recv_buffer.copy_within(copy_size.., 0);
+        dbg!(socket.recv_param.window, copy_size);
+        socket.recv_param.window += copy_size as u16;
         Ok(received_size)
     }
 
@@ -164,7 +168,7 @@ impl TCP {
         let mut event = lock.lock().unwrap();
         while event.is_none() || event.is_some() && event.unwrap() != sock_id {
             event = cvar.wait(event).unwrap();
-            dbg!("wake up");
+            dbg!("wake up", sock_id, &event);
         }
         *event = None;
     }
@@ -273,7 +277,7 @@ impl TCP {
                             if let Some(id) = socket.listening_socket {
                                 let ls = table.get_mut(&id).unwrap();
                                 ls.connected_connection_queue.push_back(sock_id);
-                                self.publish_event(sock_id);
+                                self.publish_event(ls.get_sock_id());
                             }
                             dbg!("status: synrcvd → established");
                         } else {
@@ -283,55 +287,63 @@ impl TCP {
                         dbg!("unexpected flag");
                     }
                 }
-                TcpStatus::SynSent => {}
-                TcpStatus::Established => {}
-                _ => unimplemented!(),
-            }
-        }
-    }
-
-    fn synsent_handler(
-        &self,
-        packet: &TCPPacket,
-        mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
-        socket: &mut Socket,
-    ) -> Result<()> {
-        dbg!("synsend handler");
-        if packet.get_flag() & tcpflags::ACK > 0 {
-            if socket.send_param.unacked_seq <= packet.get_ack()
-                && packet.get_ack() <= socket.send_param.next
-            {
-                if packet.get_flag() & tcpflags::RST > 0 {
-                    table.remove(&socket.get_sock_id());
-                    return Ok(());
-                }
-                if packet.get_flag() & tcpflags::SYN > 0 {
-                    socket.recv_param.next = packet.get_seq() + 1;
-                    socket.recv_param.initial_seq = packet.get_seq();
-                    socket.send_param.unacked_seq = packet.get_ack();
-                    if socket.send_param.unacked_seq > socket.send_param.initial_seq {
-                        socket
-                            .send_tcp_packet(
-                                socket.send_param.next,
-                                socket.recv_param.next,
-                                tcpflags::ACK,
-                                &[],
-                            )
-                            .unwrap(); // TODO
-                        socket.status = TcpStatus::Established;
-                        dbg!("status: SynSend → Established");
-                    } else {
-                        // to SYNRCVD
+                TcpStatus::SynSent => {
+                    // self.synsent_handler(&packet, table, socket)?;
+                    dbg!("synsend handler");
+                    if packet.get_flag() & tcpflags::ACK > 0 {
+                        if socket.send_param.unacked_seq <= packet.get_ack()
+                            && packet.get_ack() <= socket.send_param.next
+                        {
+                            if packet.get_flag() & tcpflags::RST > 0 {
+                                drop(socket);
+                                table.remove(&sock_id);
+                                // return Ok(());
+                                continue;
+                            }
+                            if packet.get_flag() & tcpflags::SYN > 0 {
+                                socket.recv_param.next = packet.get_seq() + 1;
+                                socket.recv_param.initial_seq = packet.get_seq();
+                                socket.send_param.unacked_seq = packet.get_ack();
+                                if socket.send_param.unacked_seq > socket.send_param.initial_seq {
+                                    socket
+                                        .send_tcp_packet(
+                                            socket.send_param.next,
+                                            socket.recv_param.next,
+                                            tcpflags::ACK,
+                                            &[],
+                                        )
+                                        .unwrap(); // TODO
+                                    socket.status = TcpStatus::Established;
+                                    dbg!("status: SynSend → Established");
+                                } else {
+                                    // to SYNRCVD
+                                }
+                            }
+                        } else {
+                            dbg!("invalid ack number");
+                        }
                     }
                 }
-            } else {
-                dbg!("invalid ack number");
+                TcpStatus::Established => {
+                    self.established_handler(&packet, socket)?;
+                    dbg!("end estab handler");
+                }
+                _ => unimplemented!(),
             }
+            drop(table);
         }
-        Ok(())
     }
 
-    fn established_handler(&self, packet: TCPPacket, socket: &mut Socket) -> Result<()> {
+    // fn synsent_handler(
+    //     &self,
+    //     packet: &TCPPacket,
+    //     mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
+    //     socket: &mut Socket,
+    // ) -> Result<()> {
+    // }
+
+    fn established_handler(&self, packet: &TCPPacket, socket: &mut Socket) -> Result<()> {
+        dbg!("established handler");
         // !RSTならCLOSE
         // !SYNチェック
 
@@ -341,15 +353,29 @@ impl TCP {
         {
             socket.send_param.unacked_seq = packet.get_ack();
         // !ウィンドウ操作
-        } else {
+        } else if socket.send_param.next < packet.get_ack() {
             // おかしなackは無視
+            dbg!(
+                "invalid ack num",
+                packet.get_ack(),
+                socket.send_param.unacked_seq
+            );
+            // !ACKを送る
             return Ok(());
         }
-        if packet.payload().len() > 0 {
+        // 重複のACKは無視
+
+        let payload_len = packet.payload().len();
+        if payload_len > 0 {
             let offset = socket.recv_buffer.len() - socket.recv_param.window as usize;
-            socket.recv_buffer[offset..].copy_from_slice(packet.payload());
-            socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
-            socket.recv_param.window -= packet.payload().len() as u16;
+            let copied_size = cmp::min(payload_len, socket.recv_param.window as usize);
+            socket.recv_buffer[offset..offset + copied_size]
+                .copy_from_slice(&packet.payload()[..copied_size]);
+
+            // TODO 受信バッファ溢れの時どうする？以下は溢れない前提のコード
+            socket.recv_param.next = packet.get_seq() + copied_size as u32;
+            socket.recv_param.window -= copied_size as u16;
+            // TODO ウィンドウサイズも送る
             socket.send_tcp_packet(
                 socket.send_param.next,
                 socket.recv_param.next,

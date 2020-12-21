@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use std::str;
 use std::sync::Arc;
 use toytcp::packet::tcpflags;
-use toytcp::socket::Socket;
+use toytcp::socket::{SockID, Socket};
 use toytcp::tcp::TCP;
 
 fn main() -> Result<()> {
@@ -24,17 +25,16 @@ fn serve() -> Result<()> {
         dbg!("accepted!", connected_socket.1, connected_socket.3);
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
-            cloned_tcp
-            // let mut buffer = [0u8; 1024];
-            // loop {
-            //     let nbytes = cloned_tcp.read(connected_socket, &mut buffer)?;
-            //     if nbytes == 0 {
-            //         dbg!("Connection closed.");
-            //         return Ok(());
-            //     }
-            //     print!("{}", str::from_utf8(&buffer[..nbytes])?);
-            //     cloned_tcp.write(connected_socket, &buffer[..nbytes])?;
-            // }
+            let mut buffer = [0u8; 1024];
+            loop {
+                let nbytes = cloned_tcp.receive(connected_socket, &mut buffer).unwrap();
+                if nbytes == 0 {
+                    dbg!("Connection closed.");
+                    return;
+                }
+                print!("{}", str::from_utf8(&buffer[..nbytes]).unwrap());
+                // cloned_tcp.write(connected_socket, &buffer[..nbytes])?;
+            }
         });
     }
 }
