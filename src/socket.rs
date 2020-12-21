@@ -174,10 +174,10 @@ impl Socket {
         )?; // TODO FIX
         let sent_size = sender
             .send_to(tcp_packet.clone(), IpAddr::V4(self.remote_addr))
-            .context(format!("failed to send: \n{}", tcp_packet))?;
+            .context(format!("failed to send: \n{:?}", tcp_packet))?;
 
-        dbg!("send", tcp_packet));
-        if tcp_packet.get_flag() != tcpflags::ACK {
+        dbg!("send", &tcp_packet);
+        if payload.len() > 0 || tcp_packet.get_flag() != tcpflags::ACK {
             self.retransmission_queue
                 .push_back(RetransmissionQueueEntry::new(tcp_packet));
         }

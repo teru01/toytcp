@@ -1,8 +1,8 @@
 use pnet::packet::{tcp::TcpPacket, Packet};
-use std::fmt::{self, Display};
+use std::fmt::{self, Debug};
 const TCP_HEADER_SIZE: usize = 20;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TCPPacket {
     buffer: Vec<u8>,
 }
@@ -106,7 +106,7 @@ impl Packet for TCPPacket {
     }
 }
 
-impl Display for TCPPacket {
+impl Debug for TCPPacket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,

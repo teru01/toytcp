@@ -33,7 +33,6 @@ fn serve() -> Result<()> {
                     return;
                 }
                 print!("{}", str::from_utf8(&buffer[..nbytes]).unwrap());
-                dbg!("before send");
                 cloned_tcp
                     .send(connected_socket, &buffer[..nbytes])
                     .unwrap();

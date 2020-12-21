@@ -70,7 +70,9 @@ impl TCP {
     // 全てのソケットの再送キューを見て，タイムアウトしているパケットを再送する
     fn timer(&self) {
         loop {
+            // dbg!("timer loop");
             let mut table = self.sockets.write().unwrap();
+            // dbg!("timer check start");
             for (_, socket) in table.iter_mut() {
                 while let Some(mut item) = socket.retransmission_queue.pop_front() {
                     if socket.send_param.unacked_seq > item.packet.get_seq() {
@@ -242,8 +244,8 @@ impl TCP {
                 }
             }
             event = cvar.wait(event).unwrap();
-            dbg!("wake up", &event);
         }
+        dbg!("wake up", &event);
         *event = None;
     }
 
@@ -428,6 +430,7 @@ impl TCP {
             && packet.get_ack() <= socket.send_param.next
         {
             socket.send_param.unacked_seq = packet.get_ack();
+            dbg!(socket.send_param.unacked_seq);
         // このタイミングで
         // !ウィンドウ操作
         } else if socket.send_param.next < packet.get_ack() {
