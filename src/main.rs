@@ -10,8 +10,8 @@ fn main() -> Result<()> {
     // let _ = socket
     //     .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
     //     .context("send error")?;
-    serve()?;
-    // connect()?;
+    // serve()?;
+    connect()?;
     Ok(())
 }
 

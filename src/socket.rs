@@ -41,13 +41,7 @@ pub struct Socket {
     pub retransmission_queue: VecDeque<RetransmissionQueueEntry>,
     pub synrecv_connection_channel: VecDeque<Socket>, // いらない
     pub connected_connection_queue: VecDeque<SockID>,
-    pub event_channel: (Mutex<SyncSender<TCPEvent>>, Mutex<Receiver<TCPEvent>>),
     pub listening_socket: Option<SockID>, // どのリスニングソケットから生まれたか？
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TCPEvent {
-    ConnectionCompleted,
 }
 
 #[derive(Clone, Debug)]
@@ -123,7 +117,6 @@ impl Socket {
         remote_port: u16,
         status: TcpStatus,
     ) -> Self {
-        let (s, r) = mpsc::sync_channel(CHANNEL_BOUND);
         Self {
             local_addr,
             remote_addr: remote_addr,
@@ -141,7 +134,6 @@ impl Socket {
             retransmission_queue: VecDeque::new(),
             synrecv_connection_channel: VecDeque::new(),
             connected_connection_queue: VecDeque::new(),
-            event_channel: (Mutex::new(s), Mutex::new(r)),
             listening_socket: None,
         }
     }
@@ -179,7 +171,7 @@ impl Socket {
             .send_to(tcp_packet.clone(), IpAddr::V4(self.remote_addr))
             .context(format!("failed to send: \n{}", tcp_packet))?;
 
-        // dbg!("tcp packet send", &tcp_packet);
+        dbg!("tcp packet send", format!("{}", tcp_packet));
         if tcp_packet.get_flag() != tcpflags::ACK {
             self.retransmission_queue
                 .push_back(RetransmissionQueueEntry::new(tcp_packet));

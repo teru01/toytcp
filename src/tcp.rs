@@ -1,5 +1,5 @@
 use crate::packet::{tcpflags, TCPPacket};
-use crate::socket::{SockID, Socket, TCPEvent, TcpStatus};
+use crate::socket::{SockID, Socket, TcpStatus};
 use crate::MY_IPADDR;
 use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -25,7 +25,26 @@ const MSS: usize = 1460;
 
 pub struct TCP {
     sockets: RwLock<HashMap<SockID, Socket>>,
-    pub event_cond: (Mutex<Option<SockID>>, Condvar),
+    event_cond: (Mutex<Option<TCPEvent>>, Condvar),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TCPEvent {
+    sock_id: SockID,
+    kind: TCPEventKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TCPEventKind {
+    ConnectionCompleted,
+    Acked,
+    DataArrived,
+}
+
+impl TCPEvent {
+    fn new(sock_id: SockID, kind: TCPEventKind) -> Self {
+        Self { sock_id, kind }
+    }
 }
 
 impl TCP {
@@ -58,7 +77,7 @@ impl TCP {
                         // ackされてる
                         dbg!("successfully acked", item.packet.get_seq());
                         socket.send_param.window += item.packet.payload().len() as u16;
-                        self.publish_event(socket.get_sock_id());
+                        self.publish_event(socket.get_sock_id(), TCPEventKind::Acked);
                         continue;
                     }
                     // タイムアウトを確認
@@ -117,7 +136,7 @@ impl TCP {
     /// コネクション確立キューにエントリが入るまでブロック
     /// エントリはrecvスレッドがいれる
     pub fn accept(&self, sock_id: SockID) -> Result<SockID> {
-        self.wait_event(sock_id);
+        self.wait_event(sock_id, TCPEventKind::ConnectionCompleted);
 
         let mut table = self.sockets.write().unwrap();
         Ok(table
@@ -143,13 +162,13 @@ impl TCP {
         table.insert(sock_id, socket);
         drop(table);
 
-        self.wait_event(sock_id);
+        self.wait_event(sock_id, TCPEventKind::ConnectionCompleted);
         Ok(sock_id)
     }
 
     // セグメントが到着次第(バッファに1バイト以上入り次第)すぐにreturnする
     pub fn receive(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
-        self.wait_event(sock_id);
+        self.wait_event(sock_id, TCPEventKind::DataArrived);
         // 受信バッファ-受信ウィンドウ=データ量が入っている
         let mut table = self.sockets.write().unwrap();
         let socket = table
@@ -178,18 +197,23 @@ impl TCP {
             let mut socket = table
                 .get_mut(&sock_id)
                 .context(format!("no such socket: {:?}", sock_id))?;
-            let send_size = cmp::min(
+            let mut send_size = cmp::min(
                 MSS,
                 cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
             );
             if send_size == 0 {
                 // バッファがいっぱいなので待つ
                 drop(table);
-                self.wait_event(sock_id);
+                self.wait_event(sock_id, TCPEventKind::Acked);
                 table = self.sockets.write().unwrap();
                 socket = table
                     .get_mut(&sock_id)
                     .context(format!("no such socket: {:?}", sock_id))?;
+                // 送信サイズを再計算する
+                send_size = cmp::min(
+                    MSS,
+                    cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
+                );
             }
             socket.send_tcp_packet(
                 socket.send_param.next,
@@ -201,25 +225,23 @@ impl TCP {
             socket.send_param.next += send_size as u32;
             socket.send_param.window -= send_size as u16;
             drop(table);
+            thread::sleep(Duration::from_millis(10));
         }
-
-        // socket.send_param.window -=
-
-        // let iter = buffer.chunks(cmp::min(MSS, socket.send_param.window as usize));
-        // for chunk in iter {
-        //     socket.send_tcp_packet(socket.send_param.next, socket.send_param.)
-        // }
         Ok(())
     }
 
     /// 指定したsock_idでイベントを待機
-    /// TODO: イベント種別の判別？
-    fn wait_event(&self, sock_id: SockID) {
+    fn wait_event(&self, sock_id: SockID, kind: TCPEventKind) {
         let (lock, cvar) = &self.event_cond;
         let mut event = lock.lock().unwrap();
-        while event.is_none() || event.is_some() && event.unwrap() != sock_id {
+        loop {
+            if let Some(ref e) = *event {
+                if e.sock_id == sock_id && e.kind == kind {
+                    break;
+                }
+            }
             event = cvar.wait(event).unwrap();
-            dbg!("wake up", sock_id, &event);
+            dbg!("wake up", &event);
         }
         *event = None;
     }
@@ -268,7 +290,8 @@ impl TCP {
                         socket
                     } // リスニングソケット
                     None => {
-                        unimplemented!();
+                        dbg!("SOCKET NOT FOUND");
+                        continue;
                     }
                 }, // return RST
                    // unimplemented!();
@@ -328,7 +351,10 @@ impl TCP {
                             if let Some(id) = socket.listening_socket {
                                 let ls = table.get_mut(&id).unwrap();
                                 ls.connected_connection_queue.push_back(sock_id);
-                                self.publish_event(ls.get_sock_id());
+                                self.publish_event(
+                                    ls.get_sock_id(),
+                                    TCPEventKind::ConnectionCompleted,
+                                );
                             }
                             dbg!("status: synrcvd → established");
                         } else {
@@ -435,15 +461,15 @@ impl TCP {
                 tcpflags::ACK,
                 &[],
             )?;
-            self.publish_event(socket.get_sock_id());
+            self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
         }
         Ok(())
     }
 
-    fn publish_event(&self, sock_id: SockID) {
+    fn publish_event(&self, sock_id: SockID, kind: TCPEventKind) {
         let (lock, cvar) = &self.event_cond;
-        let mut ready = lock.lock().unwrap();
-        *ready = Some(sock_id);
+        let mut e = lock.lock().unwrap();
+        *e = Some(TCPEvent::new(sock_id, kind));
         cvar.notify_all();
     }
 }
