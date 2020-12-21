@@ -118,7 +118,7 @@ impl TCP {
         let mut table = self.sockets.write().unwrap();
         Ok(table
             .get_mut(&sock_id)
-            .unwrap()
+            .context(format!("no such socket: {:?}", sock_id))?
             .connected_connection_queue
             .pop_front()
             .context("no connected socket")?)
@@ -144,12 +144,21 @@ impl TCP {
         Ok(sock_id)
     }
 
-    // // セグメントが到着次第(バッファに1バイト以上入り次第)すぐにreturnする
-    // pub fn recv(&self, sock_id: SockID, buffer: &[u8]) -> Result<usize> {
-    //     self.wait_event(sock_id);
-    // }
+    // セグメントが到着次第(バッファに1バイト以上入り次第)すぐにreturnする
+    pub fn recv(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
+        self.wait_event(sock_id);
+        // 受信バッファ-受信ウィンドウ=データ量が入っている
+        let mut table = self.sockets.write().unwrap();
+        let mut socket = table
+            .get_mut(&sock_id)
+            .context(format!("no such socket: {:?}", sock_id))?;
+        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
+        buffer.copy_from_slice(&socket.recv_buffer[..received_size]);
+        Ok(received_size)
+    }
 
     /// 指定したsock_idでイベントを待機
+    /// TODO: イベント種別の判別？
     fn wait_event(&self, sock_id: SockID) {
         let (lock, cvar) = &self.event_cond;
         let mut event = lock.lock().unwrap();
