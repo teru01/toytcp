@@ -202,6 +202,7 @@ impl TCP {
                 cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
             );
             if send_size == 0 {
+                dbg!("recv buffer is full");
                 // バッファがいっぱいなので待つ
                 drop(table);
                 self.wait_event(sock_id, TCPEventKind::Acked);
@@ -264,7 +265,6 @@ impl TCP {
             };
             dbg!("incoming from", &remote_addr, packet.get_src());
             let mut table = self.sockets.write().unwrap();
-            dbg!("write lock");
             // for k in table.keys() {
             //     dbg!(k);
             // }
@@ -403,7 +403,6 @@ impl TCP {
                 }
                 TcpStatus::Established => {
                     self.established_handler(&packet, socket)?;
-                    dbg!("end estab handler");
                 }
                 _ => unimplemented!(),
             }

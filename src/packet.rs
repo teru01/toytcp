@@ -8,9 +8,9 @@ pub struct TCPPacket {
 }
 
 impl TCPPacket {
-    pub fn new() -> Self {
+    pub fn new(payload_len: usize) -> Self {
         Self {
-            buffer: vec![0; TCP_HEADER_SIZE],
+            buffer: vec![0; TCP_HEADER_SIZE + payload_len],
         }
     }
 
@@ -91,7 +91,8 @@ impl TCPPacket {
     }
 
     pub fn set_payload(&mut self, payload: &[u8]) {
-        self.buffer[TCP_HEADER_SIZE..].copy_from_slice(payload)
+        self.buffer[TCP_HEADER_SIZE..TCP_HEADER_SIZE + payload.len() as usize]
+            .copy_from_slice(payload)
     }
 }
 

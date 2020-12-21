@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use std::str;
 use std::sync::Arc;
+use std::{io, str};
 use toytcp::packet::tcpflags;
 use toytcp::socket::{SockID, Socket};
 use toytcp::tcp::TCP;
@@ -10,8 +10,8 @@ fn main() -> Result<()> {
     // let _ = socket
     //     .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
     //     .context("send error")?;
-    // serve()?;
-    connect()?;
+    serve()?;
+    // connect()?;
     Ok(())
 }
 
@@ -33,17 +33,32 @@ fn serve() -> Result<()> {
                     return;
                 }
                 print!("{}", str::from_utf8(&buffer[..nbytes]).unwrap());
-                // cloned_tcp.write(connected_socket, &buffer[..nbytes])?;
+                dbg!("before send");
+                cloned_tcp
+                    .send(connected_socket, &buffer[..nbytes])
+                    .unwrap();
             }
         });
     }
 }
 
-fn connect() -> Result<()> {
-    let tcp = TCP::new();
-    tcp.connect("10.0.1.1".parse().unwrap(), 33333)?;
-    Ok(())
-}
+// fn connect() -> Result<()> {
+//     let tcp = TCP::new();
+//     tcp.connect("10.0.1.1".parse().unwrap(), 33333)?;
+//     loop {
+//         // 入力データをソケットから送信。
+//         let mut input = String::new();
+//         io::stdin().read_line(&mut input)?;
+//         stream.write_all(input.as_bytes())?;
+
+//         // ソケットから受信したデータを表示。
+//         let mut reader = BufReader::new(&stream);
+//         let mut buffer = Vec::new();
+//         reader.read_until(b'\n', &mut buffer)?;
+//         print!("{}", str::from_utf8(&buffer)?);
+//     }
+//     Ok(())
+// }
 
 // pub fn serve(address: &str) -> Result<(), failure::Error> {
 //     let listener = TcpListener::bind(address)?; /* [1] */
