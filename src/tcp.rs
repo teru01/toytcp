@@ -57,6 +57,8 @@ impl TCP {
                     if socket.send_param.unacked_seq > item.packet.get_seq() {
                         // ackされてる
                         dbg!("successfully acked", item.packet.get_seq());
+                        socket.send_param.window += item.packet.payload().len() as u16;
+                        self.publish_event(socket.get_sock_id());
                         continue;
                     }
                     // タイムアウトを確認
@@ -92,7 +94,7 @@ impl TCP {
                 }
             }
             drop(table);
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(50));
         }
     }
 
@@ -165,15 +167,43 @@ impl TCP {
     /// バッファが空いてないとブロックする．受信側はバッファいっぱいにならないようにreadしておかないといけない
     ///
     pub fn send(&self, sock_id: SockID, buffer: &[u8]) -> Result<()> {
-        let mut table = self.sockets.write().unwrap();
-        let socket = table
-            .get_mut(&sock_id)
-            .context(format!("no such socket: {:?}", sock_id))?;
         // 送信バッファに書き込んだらreturn(Linux方式) or 送信できたらreturn
         // 送信中に受信ウィンドウが変化するが，それには対応できない（MSS < windowなら一定なので問題ない）
         // 非同期でACKを受けている（タイマースレッドで）なので，送信ウィンドウがとても大きい（スロースタートになってない）
-
         // 送信バッファなしでやる
+        // 送信ウィンドウだけしかin flightにできない
+        let mut cursor = 0;
+        while cursor < buffer.len() {
+            let mut table = self.sockets.write().unwrap();
+            let mut socket = table
+                .get_mut(&sock_id)
+                .context(format!("no such socket: {:?}", sock_id))?;
+            let send_size = cmp::min(
+                MSS,
+                cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
+            );
+            if send_size == 0 {
+                // バッファがいっぱいなので待つ
+                drop(table);
+                self.wait_event(sock_id);
+                table = self.sockets.write().unwrap();
+                socket = table
+                    .get_mut(&sock_id)
+                    .context(format!("no such socket: {:?}", sock_id))?;
+            }
+            socket.send_tcp_packet(
+                socket.send_param.next,
+                socket.recv_param.next,
+                tcpflags::ACK,
+                &buffer[cursor..cursor + send_size],
+            )?;
+            cursor += send_size;
+            socket.send_param.next += send_size as u32;
+            socket.send_param.window -= send_size as u16;
+            drop(table);
+        }
+
+        // socket.send_param.window -=
 
         // let iter = buffer.chunks(cmp::min(MSS, socket.send_param.window as usize));
         // for chunk in iter {
@@ -373,6 +403,7 @@ impl TCP {
             && packet.get_ack() <= socket.send_param.next
         {
             socket.send_param.unacked_seq = packet.get_ack();
+        // このタイミングで
         // !ウィンドウ操作
         } else if socket.send_param.next < packet.get_ack() {
             // おかしなackは無視
