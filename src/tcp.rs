@@ -222,11 +222,47 @@ impl TCP {
             let sock_id = socket.get_sock_id();
             // ホントはちゃんとエラー処理
             match socket.status {
-                TcpStatus::Listen => {}
+                TcpStatus::Listen => {
+                    dbg!("listen handler");
+                    // check RST
+                    // check ACK
+                    if packet.get_flag() & tcpflags::SYN > 0 {
+                        let mut connection_socket = Socket::new(
+                            socket.local_addr,
+                            remote_addr,
+                            socket.local_port,
+                            packet.get_src(),
+                            TcpStatus::SynRcvd,
+                        );
+                        connection_socket.recv_param.next = packet.get_seq() + 1;
+                        connection_socket.recv_param.initial_seq = packet.get_seq();
+                        connection_socket.send_param.initial_seq = 443322; // TODO random
+                        connection_socket
+                            .send_tcp_packet(
+                                connection_socket.send_param.initial_seq,
+                                connection_socket.recv_param.next,
+                                tcpflags::SYN | tcpflags::ACK,
+                                &[],
+                            )
+                            .unwrap(); // TODO retry
+                        connection_socket.send_param.next =
+                            connection_socket.send_param.initial_seq + 1;
+                        connection_socket.send_param.unacked_seq =
+                            connection_socket.send_param.initial_seq;
+                        connection_socket.listening_socket = Some(sock_id);
+                        dbg!(sock_id);
+                        dbg!("status: listen → synrcvd");
+                        table.insert(connection_socket.get_sock_id(), connection_socket);
+                    }
+                }
                 TcpStatus::SynRcvd => {
                     dbg!("synrcvd handler");
+                    // seqを見て受け入れ可能テスト
+
                     // check RST
                     // check SYN
+
+                    // ACK
                     if packet.get_flag() & tcpflags::ACK > 0 {
                         if socket.send_param.unacked_seq <= packet.get_ack()
                             && packet.get_ack() <= socket.send_param.next
@@ -237,10 +273,7 @@ impl TCP {
                             if let Some(id) = socket.listening_socket {
                                 let ls = table.get_mut(&id).unwrap();
                                 ls.connected_connection_queue.push_back(sock_id);
-                                let (lock, cvar) = &self.event_cond;
-                                let mut ready = lock.lock().unwrap();
-                                *ready = Some(ls.get_sock_id());
-                                cvar.notify_one();
+                                self.publish_event(sock_id);
                             }
                             dbg!("status: synrcvd → established");
                         } else {
@@ -256,6 +289,7 @@ impl TCP {
             }
         }
     }
+
     fn synsent_handler(
         &self,
         packet: &TCPPacket,
@@ -295,5 +329,42 @@ impl TCP {
             }
         }
         Ok(())
+    }
+
+    fn established_handler(&self, packet: TCPPacket, socket: &mut Socket) -> Result<()> {
+        // !RSTならCLOSE
+        // !SYNチェック
+
+        // 受け入れ
+        if socket.send_param.unacked_seq < packet.get_ack()
+            && packet.get_ack() <= socket.send_param.next
+        {
+            socket.send_param.unacked_seq = packet.get_ack();
+        // !ウィンドウ操作
+        } else {
+            // おかしなackは無視
+            return Ok(());
+        }
+        if packet.payload().len() > 0 {
+            let offset = socket.recv_buffer.len() - socket.recv_param.window as usize;
+            socket.recv_buffer[offset..].copy_from_slice(packet.payload());
+            socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
+            socket.recv_param.window -= packet.payload().len() as u16;
+            socket.send_tcp_packet(
+                socket.send_param.next,
+                socket.recv_param.next,
+                tcpflags::ACK,
+                &[],
+            )?;
+            self.publish_event(socket.get_sock_id());
+        }
+        Ok(())
+    }
+
+    fn publish_event(&self, sock_id: SockID) {
+        let (lock, cvar) = &self.event_cond;
+        let mut ready = lock.lock().unwrap();
+        *ready = Some(sock_id);
+        cvar.notify_all();
     }
 }

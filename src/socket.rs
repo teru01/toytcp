@@ -16,7 +16,8 @@ use std::sync::{
 use std::time::SystemTime;
 
 const TCP_DATA_OFFSET: u8 = 5;
-const CHANNEL_BOUND: usize = 65535;
+const CHANNEL_BOUND: usize = 1 << 16;
+const SOCKET_BUFFER_SIZE: usize = 1 << 16;
 
 // enum Socket {
 //     ListenSocket(Socket),
@@ -132,11 +133,11 @@ impl Socket {
             recv_param: RecvParam {
                 initial_seq: 0,
                 next: 0,
-                window: 1024,
+                window: (SOCKET_BUFFER_SIZE - 1) as u16,
             },
             status,
-            send_buffer: vec![0; 65535],
-            recv_buffer: vec![0; 65535],
+            send_buffer: vec![0; SOCKET_BUFFER_SIZE],
+            recv_buffer: vec![0; SOCKET_BUFFER_SIZE],
             retransmission_queue: VecDeque::new(),
             synrecv_connection_channel: VecDeque::new(),
             connected_connection_queue: VecDeque::new(),
