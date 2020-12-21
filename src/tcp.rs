@@ -113,16 +113,7 @@ impl TCP {
     /// コネクション確立キューにエントリが入るまでブロック
     /// エントリはrecvスレッドがいれる
     pub fn accept(&self, sock_id: SockID) -> Result<SockID> {
-        let (lock, cvar) = &self.event_cond;
-        let mut event = lock.lock().unwrap();
-        while event.is_none() || event.is_some() && event.unwrap() != sock_id {
-            // イベントが来てない or 来てたとしても関係ないなら待機
-            // cvarに通知が来るまでeventをunlockする
-            // 通知が来たらlockをとってリターン
-            event = cvar.wait(event).unwrap();
-            dbg!("wake up");
-        }
-        *event = None;
+        self.wait_event(sock_id);
 
         let mut table = self.sockets.write().unwrap();
         Ok(table
@@ -136,7 +127,7 @@ impl TCP {
     /// ターゲットに接続し，接続済みソケットのIDを返す
     pub fn connect(&self, addr: Ipv4Addr, port: u16) -> Result<SockID> {
         let mut rng = rand::thread_rng();
-        let local_port = rng.gen_range(40000..60000);
+        let local_port = rng.gen_range(40000..60000); // TODO: 利用されてないか？
         let mut socket = Socket::new(MY_IPADDR, addr, local_port, port, TcpStatus::SynSent);
         let iss = rng.gen_range(1..1 << 31);
         socket.send_param.initial_seq = iss; // ランダムにしないと，2回目以降SYNが返ってこなくなる（ACKだけ）
@@ -149,6 +140,17 @@ impl TCP {
         table.insert(sock_id, socket);
         drop(table);
 
+        self.wait_event(sock_id);
+        Ok(sock_id)
+    }
+
+    // // セグメントが到着次第(バッファに1バイト以上入り次第)すぐにreturnする
+    // pub fn recv(&self, sock_id: SockID, buffer: &[u8]) -> Result<usize> {
+    //     self.wait_event(sock_id);
+    // }
+
+    /// 指定したsock_idでイベントを待機
+    fn wait_event(&self, sock_id: SockID) {
         let (lock, cvar) = &self.event_cond;
         let mut event = lock.lock().unwrap();
         while event.is_none() || event.is_some() && event.unwrap() != sock_id {
@@ -156,7 +158,6 @@ impl TCP {
             dbg!("wake up");
         }
         *event = None;
-        Ok(sock_id)
     }
 
     fn receive_handler(&self) -> Result<()> {
