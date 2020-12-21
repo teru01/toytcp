@@ -21,26 +21,19 @@ const MAX_RETRANSMITTION: u8 = 3;
 const RETRANSMITTION_TIMEOUT: u64 = 3;
 use std::time::{Duration, SystemTime};
 
-// type CondMutex = (Mutex<bool>, Condvar);
-
 pub struct TCP {
     sockets: RwLock<HashMap<SockID, Socket>>,
-    // locker: Arc<CondMutex>
-    // event_channel: Arc<Receiver<TCPEvent>>,
     pub event_cond: (Mutex<Option<SockID>>, Condvar),
 }
 
 impl TCP {
     pub fn new() -> Arc<Self> {
-        // let (sender, reciever) = mpsc::channel();
         let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
-            sockets, // event_channel: Arc::new(reciever),
-            // my_ip: "192.168.69.100".parse().unwrap(),
+            sockets,
             event_cond: (Mutex::new(None), Condvar::new()),
         });
         let cloned_tcp = tcp.clone();
-        // let cloned_sockets = sockets.clone();
         std::thread::spawn(move || {
             // 受信スレッドではtableとsenderに触りたい
             cloned_tcp.receive_handler();
@@ -49,7 +42,6 @@ impl TCP {
         std::thread::spawn(move || {
             cloned_tcp.timer();
         });
-        // ハンドラスレッドではtableとreceiverに触りたい
         tcp
     }
 
@@ -59,10 +51,6 @@ impl TCP {
         loop {
             let mut table = self.sockets.write().unwrap();
             for (_, socket) in table.iter_mut() {
-                // let iter = v.retransmission_queue.iter_mut().peekable();
-                // loop {
-                //     if let Some(entry) = iter.peek()
-                // }
                 while let Some(mut item) = socket.retransmission_queue.pop_front() {
                     if socket.send_param.unacked_seq > item.packet.get_seq() {
                         // ackされてる
@@ -147,19 +135,6 @@ impl TCP {
 
     /// ターゲットに接続し，接続済みソケットのIDを返す
     pub fn connect(&self, addr: Ipv4Addr, port: u16) -> Result<SockID> {
-        // create socket
-        // send SYN
-        // to SYNSENT
-        // lock table insert
-        // unlock
-        // select
-        // <- ESTAB event
-        // to ESTAB
-        // lock table insert
-        // return sockid
-        // time up
-        //
-        //  send SYN
         let mut rng = rand::thread_rng();
         let local_port = rng.gen_range(40000..60000);
         let mut socket = Socket::new(MY_IPADDR, addr, local_port, port, TcpStatus::SynSent);
