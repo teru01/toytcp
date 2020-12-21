@@ -1,5 +1,6 @@
 use crate::packet::{tcpflags, TCPPacket};
 use crate::socket::{SockID, Socket, TCPEvent, TcpStatus};
+use crate::MY_IPADDR;
 use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::Packet;
@@ -8,19 +9,19 @@ use pnet::transport::{
 };
 use pnet::util;
 use rand::Rng;
+use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
+use std::time::{Duration, SystemTime};
 const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
 const WINDOW_SIZE: u16 = 65535;
-use crate::MY_IPADDR;
 const MAX_RETRANSMITTION: u8 = 3;
 const RETRANSMITTION_TIMEOUT: u64 = 3;
-use std::cmp;
-use std::time::{Duration, SystemTime};
+const MSS: usize = 1460;
 
 pub struct TCP {
     sockets: RwLock<HashMap<SockID, Socket>>,
@@ -159,6 +160,26 @@ impl TCP {
         dbg!(socket.recv_param.window, copy_size);
         socket.recv_param.window += copy_size as u16;
         Ok(received_size)
+    }
+
+    /// バッファが空いてないとブロックする．受信側はバッファいっぱいにならないようにreadしておかないといけない
+    ///
+    pub fn send(&self, sock_id: SockID, buffer: &[u8]) -> Result<()> {
+        let mut table = self.sockets.write().unwrap();
+        let socket = table
+            .get_mut(&sock_id)
+            .context(format!("no such socket: {:?}", sock_id))?;
+        // 送信バッファに書き込んだらreturn(Linux方式) or 送信できたらreturn
+        // 送信中に受信ウィンドウが変化するが，それには対応できない（MSS < windowなら一定なので問題ない）
+        // 非同期でACKを受けている（タイマースレッドで）なので，送信ウィンドウがとても大きい（スロースタートになってない）
+
+        // 送信バッファなしでやる
+
+        // let iter = buffer.chunks(cmp::min(MSS, socket.send_param.window as usize));
+        // for chunk in iter {
+        //     socket.send_tcp_packet(socket.send_param.next, socket.send_param.)
+        // }
+        Ok(())
     }
 
     /// 指定したsock_idでイベントを待機
@@ -364,6 +385,7 @@ impl TCP {
             return Ok(());
         }
         // 重複のACKは無視
+        // socket.send_param.send
 
         let payload_len = packet.payload().len();
         if payload_len > 0 {
