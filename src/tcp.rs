@@ -11,7 +11,7 @@ use rand::Rng;
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
@@ -222,39 +222,7 @@ impl TCP {
             let sock_id = socket.get_sock_id();
             // ホントはちゃんとエラー処理
             match socket.status {
-                TcpStatus::Listen => {
-                    dbg!("listen handler");
-                    // check RST
-                    // check ACK
-                    if packet.get_flag() & tcpflags::SYN > 0 {
-                        let mut connection_socket = Socket::new(
-                            socket.local_addr,
-                            remote_addr,
-                            socket.local_port,
-                            packet.get_src(),
-                            TcpStatus::SynRcvd,
-                        );
-                        connection_socket.recv_param.next = packet.get_seq() + 1;
-                        connection_socket.recv_param.initial_seq = packet.get_seq();
-                        connection_socket.send_param.initial_seq = 443322; // TODO random
-                        connection_socket
-                            .send_tcp_packet(
-                                connection_socket.send_param.initial_seq,
-                                connection_socket.recv_param.next,
-                                tcpflags::SYN | tcpflags::ACK,
-                                &[],
-                            )
-                            .unwrap(); // TODO retry
-                        connection_socket.send_param.next =
-                            connection_socket.send_param.initial_seq + 1;
-                        connection_socket.send_param.unacked_seq =
-                            connection_socket.send_param.initial_seq;
-                        connection_socket.listening_socket = Some(sock_id);
-                        dbg!(sock_id);
-                        dbg!("status: listen → synrcvd");
-                        table.insert(connection_socket.get_sock_id(), connection_socket);
-                    }
-                }
+                TcpStatus::Listen => {}
                 TcpStatus::SynRcvd => {
                     dbg!("synrcvd handler");
                     // check RST
@@ -282,43 +250,50 @@ impl TCP {
                         dbg!("unexpected flag");
                     }
                 }
-                TcpStatus::SynSent => {
-                    dbg!("synsend handler");
-                    if packet.get_flag() & tcpflags::ACK > 0 {
-                        if socket.send_param.unacked_seq <= packet.get_ack()
-                            && packet.get_ack() <= socket.send_param.next
-                        {
-                            if packet.get_flag() & tcpflags::RST > 0 {
-                                drop(socket); // tableの&mutを得るためdropする必要がある
-                                table.remove(&sock_id);
-                                continue;
-                            }
-                            if packet.get_flag() & tcpflags::SYN > 0 {
-                                socket.recv_param.next = packet.get_seq() + 1;
-                                socket.recv_param.initial_seq = packet.get_seq();
-                                socket.send_param.unacked_seq = packet.get_ack();
-                                if socket.send_param.unacked_seq > socket.send_param.initial_seq {
-                                    socket
-                                        .send_tcp_packet(
-                                            socket.send_param.next,
-                                            socket.recv_param.next,
-                                            tcpflags::ACK,
-                                            &[],
-                                        )
-                                        .unwrap(); // TODO
-                                    socket.status = TcpStatus::Established;
-                                    dbg!("status: SynSend → Established");
-                                } else {
-                                    // to SYNRCVD
-                                }
-                            }
-                        } else {
-                            dbg!("invalid ack number");
-                        }
-                    }
-                }
+                TcpStatus::SynSent => {}
+                TcpStatus::Established => {}
                 _ => unimplemented!(),
             }
         }
+    }
+    fn synsent_handler(
+        &self,
+        packet: &TCPPacket,
+        mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
+        socket: &mut Socket,
+    ) -> Result<()> {
+        dbg!("synsend handler");
+        if packet.get_flag() & tcpflags::ACK > 0 {
+            if socket.send_param.unacked_seq <= packet.get_ack()
+                && packet.get_ack() <= socket.send_param.next
+            {
+                if packet.get_flag() & tcpflags::RST > 0 {
+                    table.remove(&socket.get_sock_id());
+                    return Ok(());
+                }
+                if packet.get_flag() & tcpflags::SYN > 0 {
+                    socket.recv_param.next = packet.get_seq() + 1;
+                    socket.recv_param.initial_seq = packet.get_seq();
+                    socket.send_param.unacked_seq = packet.get_ack();
+                    if socket.send_param.unacked_seq > socket.send_param.initial_seq {
+                        socket
+                            .send_tcp_packet(
+                                socket.send_param.next,
+                                socket.recv_param.next,
+                                tcpflags::ACK,
+                                &[],
+                            )
+                            .unwrap(); // TODO
+                        socket.status = TcpStatus::Established;
+                        dbg!("status: SynSend → Established");
+                    } else {
+                        // to SYNRCVD
+                    }
+                }
+            } else {
+                dbg!("invalid ack number");
+            }
+        }
+        Ok(())
     }
 }
