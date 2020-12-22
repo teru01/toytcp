@@ -22,7 +22,6 @@ const RETRANSMITTION_TIMEOUT: u64 = 3;
 const MSS: usize = 1460;
 
 pub struct TCP {
-    // local_addr: Ipv4Addr,
     sockets: RwLock<HashMap<SockID, Socket>>,
     event_cond: (Mutex<Option<TCPEvent>>, Condvar),
 }
@@ -51,7 +50,6 @@ impl TCP {
     pub fn new() -> Arc<Self> {
         let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
-            // local_addr: "0.0.0.0".parse().unwrap(),
             sockets,
             event_cond: (Mutex::new(None), Condvar::new()),
         });
@@ -110,7 +108,7 @@ impl TCP {
                             )),
                         )
                         .unwrap(); // TODO FIX
-                        dbg!("retransmit", item.packet.get_seq());
+                        dbg!("retransmit", &item.packet);
                         let sent_size = sender
                             .send_to(item.packet.clone(), IpAddr::V4(socket.remote_addr))
                             .context(format!("failed to retransmit"))
@@ -197,6 +195,7 @@ impl TCP {
         if received_size == 0 {
             // CLOSEWAIT以外の時に受信がないなら待機
             drop(table);
+            dbg!("waiting incoming data");
             self.wait_event(sock_id, TCPEventKind::DataArrived);
             table = self.sockets.write().unwrap();
             socket = table
@@ -244,6 +243,7 @@ impl TCP {
                     MSS,
                     cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
                 );
+                dbg!("next while", send_size, socket.send_param.window);
             }
             socket.send_tcp_packet(
                 socket.send_param.next,
@@ -418,6 +418,10 @@ impl TCP {
                         if socket.send_param.unacked_seq <= packet.get_ack()
                             && packet.get_ack() <= socket.send_param.next
                         {
+                            // SYN|ACKが入っている
+                            if let None = socket.retransmission_queue.pop_front() {
+                                dbg!("initial SYN|ACK NOT FOUND");
+                            }
                             socket.recv_param.next = packet.get_seq();
                             socket.send_param.unacked_seq = packet.get_ack();
                             socket.status = TcpStatus::Established;
@@ -464,6 +468,10 @@ impl TCP {
                                         )
                                         .unwrap(); // TODO
                                     socket.status = TcpStatus::Established;
+                                    if let None = socket.retransmission_queue.pop_front() {
+                                        // 最初のSYNが入っている
+                                        dbg!("initial SYN not fount!");
+                                    }
                                     dbg!("status: SynSend → Established");
                                     self.publish_event(sock_id, TCPEventKind::ConnectionCompleted);
                                 } else {
@@ -539,11 +547,34 @@ impl TCP {
         // !SYNチェック
 
         // 受け入れ
+        // dbg!(
+        //     "before accept",
+        //     socket.send_param.unacked_seq,
+        //     packet.get_ack(),
+        //     socket.send_param.unacked_seq
+        // );
         if socket.send_param.unacked_seq < packet.get_ack()
             && packet.get_ack() <= socket.send_param.next
         {
             socket.send_param.unacked_seq = packet.get_ack();
-            dbg!(socket.send_param.unacked_seq);
+            dbg!("ack accept", socket.send_param.unacked_seq);
+            while let Some(item) = socket.retransmission_queue.pop_front() {
+                if socket.send_param.unacked_seq > item.packet.get_seq() {
+                    // ackされてる
+                    dbg!("successfully acked", item.packet.get_seq());
+                    socket.send_param.window += item.packet.payload().len() as u16;
+                    self.publish_event(socket.get_sock_id(), TCPEventKind::Acked); // イベントを受けた側がテーブルロックを取れるのは1ループ終わった後
+                    if item.packet.get_flag() & tcpflags::FIN > 0
+                        && socket.status == TcpStatus::LastAck
+                    {
+                        self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionClosed);
+                    }
+                } else {
+                    // ackされてない．戻す．
+                    socket.retransmission_queue.push_front(item);
+                    break;
+                }
+            }
         // このタイミングで
         // !ウィンドウ操作
         } else if socket.send_param.next < packet.get_ack() {

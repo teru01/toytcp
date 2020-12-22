@@ -50,7 +50,7 @@ fn fileserver() -> Result<()> {
                 }
                 v.extend_from_slice(&buffer[..nbytes]);
             }
-            fs::write("/home/ono/tcp/recv.png", &v).unwrap();
+            fs::write("/home/ono/tcp/recv.jpg", &v).unwrap();
         });
     }
 }
@@ -63,7 +63,7 @@ fn fileclient() -> Result<()> {
         cloned_tcp.close(sock_id).unwrap();
         std::process::exit(0);
     })?;
-    let input = fs::read("/home/ono/tcp/send.png")?;
+    let input = fs::read("/home/ono/tcp/send.jpg")?;
     tcp.send(sock_id, &input)?;
     tcp.close(sock_id).unwrap();
     Ok(())
