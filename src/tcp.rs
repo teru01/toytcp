@@ -616,14 +616,15 @@ impl TCP {
         let payload_len = packet.payload().len();
         if payload_len > 0 {
             // バッファにおける読み込みのヘッド位置．
-            let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
-                + (packet.get_seq() - socket.recv_param.next) as usize;
             dbg!(
-                offset,
+                // offset,
                 socket.recv_buffer.len(),
+                socket.recv_param.window,
                 packet.get_seq(),
                 socket.recv_param.next
             );
+            let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
+                + (packet.get_seq() - socket.recv_param.next) as usize;
             let copied_size = cmp::min(payload_len, socket.recv_buffer.len() - offset);
             socket.recv_buffer[offset..offset + copied_size]
                 .copy_from_slice(&packet.payload()[..copied_size]);
