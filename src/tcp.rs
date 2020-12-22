@@ -39,6 +39,7 @@ pub enum TCPEventKind {
     ConnectionCompleted,
     Acked,
     DataArrived,
+    ConnectionClosed,
 }
 
 impl TCPEvent {
@@ -80,7 +81,15 @@ impl TCP {
                         // ackされてる
                         dbg!("successfully acked", item.packet.get_seq());
                         socket.send_param.window += item.packet.payload().len() as u16;
-                        self.publish_event(socket.get_sock_id(), TCPEventKind::Acked);
+                        self.publish_event(socket.get_sock_id(), TCPEventKind::Acked); // イベントを受けた側がテーブルロックを取れるのは1ループ終わった後
+                        if item.packet.get_flag() & tcpflags::FIN > 0
+                            && socket.status == TcpStatus::LastAck
+                        {
+                            self.publish_event(
+                                socket.get_sock_id(),
+                                TCPEventKind::ConnectionClosed,
+                            );
+                        }
                         continue;
                     }
                     // タイムアウトを確認
@@ -162,7 +171,7 @@ impl TCP {
             local_port,
             port,
             TcpStatus::SynSent,
-        ); // TODO: iprouteから抽出
+        );
         let iss = rng.gen_range(1..1 << 31);
         socket.send_param.initial_seq = iss; // ランダムにしないと，2回目以降SYNが返ってこなくなる（ACKだけ）
         socket.send_tcp_packet(socket.send_param.initial_seq, 0, tcpflags::SYN, &[])?;
@@ -177,10 +186,10 @@ impl TCP {
         Ok(sock_id)
     }
 
-    // セグメントが到着次第(バッファに1バイト以上入り次第)すぐにreturnする
+    /// セグメントが到着次第すぐにreturnする
+    /// 到着イベント発生→ロック取得→読み出し
     pub fn receive(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
-        self.wait_event(sock_id, TCPEventKind::DataArrived);
-        // 受信バッファ-受信ウィンドウ=データ量が入っている
+        self.wait_event(sock_id, TCPEventKind::DataArrived); // TODO: 到着した時だけじゃダメ．受信バッファにあるなら通過
         let mut table = self.sockets.write().unwrap();
         let socket = table
             .get_mut(&sock_id)
@@ -190,7 +199,13 @@ impl TCP {
         buffer[..copy_size].copy_from_slice(&socket.recv_buffer[..copy_size]);
         socket.recv_buffer.copy_within(copy_size.., 0);
         dbg!(socket.recv_param.window, copy_size);
+
         socket.recv_param.window += copy_size as u16;
+        if socket.status == TcpStatus::CloseWait {
+            // 全て読んだらFINを処理しろ
+            // 1 FINだけのdata arrived
+            // 2 データと共にFIN
+        }
         Ok(copy_size)
     }
 
@@ -239,6 +254,7 @@ impl TCP {
             cursor += send_size;
             socket.send_param.next += send_size as u32;
             socket.send_param.window -= send_size as u16;
+            // TODO: 必要な時だけスリープ
             drop(table);
             thread::sleep(Duration::from_millis(10));
         }
@@ -258,7 +274,13 @@ impl TCP {
         )?;
         match socket.status {
             TcpStatus::Established => socket.status = TcpStatus::FinWait1,
-            TcpStatus::CloseWait => socket.status = TcpStatus::LastAck,
+            TcpStatus::CloseWait => {
+                socket.status = TcpStatus::LastAck;
+                drop(table);
+                self.wait_event(sock_id, TCPEventKind::ConnectionClosed);
+                let mut table = self.sockets.write().unwrap();
+                table.remove(&sock_id);
+            }
             TcpStatus::Listen => {
                 table.remove(&sock_id);
             }
@@ -521,6 +543,7 @@ impl TCP {
             // ここでFINを送って直接LAST-ACKに遷移するのもあり
             // ソケットの送信ウィンドウにデータが残ってしまうので？ 明示的にFINさせよう
             socket.status = TcpStatus::CloseWait;
+            self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
         }
         Ok(())
     }
