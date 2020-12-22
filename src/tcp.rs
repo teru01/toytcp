@@ -125,7 +125,7 @@ impl TCP {
                 }
             }
             drop(table);
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(500));
         }
     }
 
@@ -532,14 +532,6 @@ impl TCP {
             drop(table);
         }
     }
-
-    // fn synsent_handler(
-    //     &self,
-    //     packet: &TCPPacket,
-    //     mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
-    //     socket: &mut Socket,
-    // ) -> Result<()> {
-    // }
 
     fn established_handler(&self, packet: &TCPPacket, socket: &mut Socket) -> Result<()> {
         dbg!("established handler");
