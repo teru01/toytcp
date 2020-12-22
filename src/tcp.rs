@@ -195,8 +195,7 @@ impl TCP {
         let mut socket = table
             .get_mut(&sock_id)
             .context(format!("no such socket: {:?}", sock_id))?;
-        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
-        // if received_size == 0 && (socket.status != TcpStatus::CloseWait) {
+        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize; //ロスで歯抜けになってる時，windowはrecv_handlerで変化させてない，0になるのでブロック
         if received_size == 0 {
             // CLOSEWAIT以外の時に受信がないなら待機
             drop(table);
@@ -207,11 +206,12 @@ impl TCP {
                 .get_mut(&sock_id)
                 .context(format!("no such socket: {:?}", sock_id))?;
         }
-        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
+        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize; // ロスの後の歯抜けに埋まった時，一気に2セグ分コピー
         let copy_size = cmp::min(buffer.len(), received_size);
         buffer[..copy_size].copy_from_slice(&socket.recv_buffer[..copy_size]);
         socket.recv_buffer.copy_within(copy_size.., 0);
         socket.recv_param.window += copy_size as u16;
+        // socket.recv_param.tail -= copy_size as u32;
         dbg!(socket.recv_param.window, copy_size);
         Ok(copy_size)
     }
@@ -612,17 +612,25 @@ impl TCP {
             // バッファにおける読み込みのヘッド位置．
             let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
                 + (packet.get_seq() - socket.recv_param.next) as usize;
+            dbg!(
+                offset,
+                socket.recv_buffer.len(),
+                packet.get_seq(),
+                socket.recv_param.next
+            );
             let copied_size = cmp::min(payload_len, socket.recv_buffer.len() - offset);
             socket.recv_buffer[offset..offset + copied_size]
                 .copy_from_slice(&packet.payload()[..copied_size]);
-            socket.recv_param.tail =
-                cmp::max(socket.recv_param.tail, (offset + copied_size) as u32); // ロス再送で穴埋めされる時のためにmaxをとる
+            socket.recv_param.tail = cmp::max(
+                socket.recv_param.tail,
+                packet.get_seq() + copied_size as u32,
+            ); // ロス再送で穴埋めされる時のためにmaxをとる
 
             // TODO 受信バッファ溢れの時どうする？以下は溢れない前提のコード
             if packet.get_seq() == socket.recv_param.next {
                 // ロス・順序入れ替わり無しの場合のみrecv_param.nextを進められる
                 socket.recv_param.next = socket.recv_param.tail;
-                socket.recv_param.window -= (socket.recv_param.tail - offset as u32) as u16;
+                socket.recv_param.window -= (socket.recv_param.tail - packet.get_seq()) as u16;
             }
             // ロスの時はこれではダメ，
 
