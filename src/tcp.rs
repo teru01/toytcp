@@ -245,6 +245,28 @@ impl TCP {
         Ok(())
     }
 
+    pub fn close(&self, sock_id: SockID) -> Result<()> {
+        let mut table = self.sockets.write().unwrap();
+        let mut socket = table
+            .get_mut(&sock_id)
+            .context(format!("no such socket: {:?}", sock_id))?;
+        socket.send_tcp_packet(
+            socket.send_param.next,
+            socket.recv_param.next,
+            tcpflags::FIN | tcpflags::ACK,
+            &[],
+        )?;
+        match socket.status {
+            TcpStatus::Established => socket.status = TcpStatus::FinWait1,
+            TcpStatus::CloseWait => socket.status = TcpStatus::LastAck,
+            TcpStatus::Listen => {
+                table.remove(&sock_id);
+            }
+            _ => return Ok(()),
+        }
+        Ok(())
+    }
+
     /// 指定したsock_idでイベントを待機
     fn wait_event(&self, sock_id: SockID, kind: TCPEventKind) {
         let (lock, cvar) = &self.event_cond;
@@ -424,6 +446,7 @@ impl TCP {
                 TcpStatus::Established => {
                     self.established_handler(&packet, socket)?;
                 }
+                // TcpStatus::
                 _ => unimplemented!(),
             }
             drop(table);
@@ -452,7 +475,7 @@ impl TCP {
         // このタイミングで
         // !ウィンドウ操作
         } else if socket.send_param.next < packet.get_ack() {
-            // おかしなackは無視
+            // おかしなackは破棄
             dbg!(
                 "invalid ack num",
                 packet.get_ack(),
@@ -463,6 +486,10 @@ impl TCP {
         }
         // 重複のACKは無視
         // socket.send_param.send
+        if packet.get_flag() & tcpflags::ACK == 0 {
+            // ACKが立っていないパケットは破棄
+            return Ok(());
+        }
 
         let payload_len = packet.payload().len();
         if payload_len > 0 {
@@ -482,6 +509,18 @@ impl TCP {
                 &[],
             )?;
             self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
+        }
+        if packet.get_flag() & tcpflags::FIN > 0 {
+            socket.recv_param.next = packet.get_seq() + 1;
+            socket.send_tcp_packet(
+                socket.send_param.next,
+                socket.recv_param.next,
+                tcpflags::ACK,
+                &[],
+            )?;
+            // ここでFINを送って直接LAST-ACKに遷移するのもあり
+            // ソケットの送信ウィンドウにデータが残ってしまうので？ 明示的にFINさせよう
+            socket.status = TcpStatus::CloseWait;
         }
         Ok(())
     }
