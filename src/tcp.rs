@@ -195,9 +195,13 @@ impl TCP {
         let mut socket = table
             .get_mut(&sock_id)
             .context(format!("no such socket: {:?}", sock_id))?;
-        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize; //ロスで歯抜けになってる時，windowはrecv_handlerで変化させてない，0になるのでブロック
-        if received_size == 0 {
-            // CLOSEWAIT以外の時に受信がないなら待機
+        let mut received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
+        while received_size == 0 {
+            // ペイロードを受信 or FINを受信でスキップ
+            match socket.status {
+                TcpStatus::CloseWait | TcpStatus::LastAck | TcpStatus::TimeWait => break,
+                _ => {}
+            }
             drop(table);
             dbg!("waiting incoming data");
             self.wait_event(sock_id, TCPEventKind::DataArrived);
@@ -205,6 +209,8 @@ impl TCP {
             socket = table
                 .get_mut(&sock_id)
                 .context(format!("no such socket: {:?}", sock_id))?;
+            received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
+            //ロスで歯抜けになってる時，windowはrecv_handlerで変化させてない，0になる
         }
         let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize; // ロスの後の歯抜けに埋まった時，一気に2セグ分コピー
         let copy_size = cmp::min(buffer.len(), received_size);
