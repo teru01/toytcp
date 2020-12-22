@@ -194,10 +194,11 @@ impl TCP {
             .get_mut(&sock_id)
             .context(format!("no such socket: {:?}", sock_id))?;
         let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
-        if received_size == 0 && socket.status != TcpStatus::CloseWait {
+        // if received_size == 0 && (socket.status != TcpStatus::CloseWait) {
+        if received_size == 0 {
             // CLOSEWAIT以外の時に受信がないなら待機
             drop(table);
-            self.wait_event(sock_id, TCPEventKind::DataArrived); // TODO: 到着した時だけじゃダメ．受信バッファにあるなら通過
+            self.wait_event(sock_id, TCPEventKind::DataArrived);
             table = self.sockets.write().unwrap();
             socket = table
                 .get_mut(&sock_id)
@@ -281,7 +282,7 @@ impl TCP {
             TcpStatus::Established => {
                 socket.status = TcpStatus::FinWait1;
                 drop(table);
-                self.wait_event(sock_id, TCPEventKind::ConnectionClosed); // タイムアウトつける
+                self.wait_event(sock_id, TCPEventKind::ConnectionClosed);
                 let mut table = self.sockets.write().unwrap();
                 table.remove(&sock_id);
                 dbg!("closed & removed", sock_id);
@@ -289,7 +290,7 @@ impl TCP {
             TcpStatus::CloseWait => {
                 socket.status = TcpStatus::LastAck;
                 drop(table);
-                self.wait_event(sock_id, TCPEventKind::ConnectionClosed); // タイムアウトつける
+                self.wait_event(sock_id, TCPEventKind::ConnectionClosed);
                 let mut table = self.sockets.write().unwrap();
                 table.remove(&sock_id);
                 dbg!("closed & removed", sock_id);
