@@ -63,11 +63,9 @@ fn connect() -> Result<()> {
         std::process::exit(0);
     })?;
     loop {
-        dbg!("loop");
         // 入力データをソケットから送信。
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
-        dbg!("input: ", &input);
 
         tcp.send(sock_id, input.as_bytes())?;
 

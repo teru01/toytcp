@@ -208,9 +208,8 @@ impl TCP {
         let copy_size = cmp::min(buffer.len(), received_size);
         buffer[..copy_size].copy_from_slice(&socket.recv_buffer[..copy_size]);
         socket.recv_buffer.copy_within(copy_size.., 0);
-        dbg!(socket.recv_param.window, copy_size);
-
         socket.recv_param.window += copy_size as u16;
+        dbg!(socket.recv_param.window, copy_size);
         Ok(copy_size)
     }
 
@@ -222,12 +221,9 @@ impl TCP {
         // 非同期でACKを受けている（タイマースレッドで）なので，送信ウィンドウがとても大きい（スロースタートになってない）
         // 送信バッファなしでやる
         // 送信ウィンドウだけしかin flightにできない
-        dbg!("send");
         let mut cursor = 0;
         while cursor < buffer.len() {
-            dbg!("before lock");
             let mut table = self.sockets.write().unwrap();
-            dbg!("after lock");
             let mut socket = table
                 .get_mut(&sock_id)
                 .context(format!("no such socket: {:?}", sock_id))?;
@@ -315,7 +311,7 @@ impl TCP {
             }
             event = cvar.wait(event).unwrap();
         }
-        dbg!("wake up", &event);
+        dbg!(&event);
         *event = None;
     }
 
@@ -340,7 +336,7 @@ impl TCP {
                 IpAddr::V4(addr) => addr,
                 _ => continue,
             };
-            dbg!("incoming from", &remote_addr, packet.get_src());
+            // dbg!("incoming from", &remote_addr, packet.get_src());
             let mut table = self.sockets.write().unwrap();
             let socket = match table.get_mut(&SockID(
                 local_addr,
@@ -349,7 +345,7 @@ impl TCP {
                 packet.get_src(),
             )) {
                 Some(socket) => {
-                    dbg!("connected socket", socket.get_sock_id());
+                    // dbg!("connected socket", socket.get_sock_id());
                     socket // 接続済みソケット
                 }
                 None => match table.get_mut(&SockID(
@@ -359,7 +355,7 @@ impl TCP {
                     UNDETERMINED_PORT,
                 )) {
                     Some(socket) => {
-                        dbg!("listening socket", socket.get_sock_id());
+                        // dbg!("listening socket", socket.get_sock_id());
                         socket
                     } // リスニングソケット
                     None => {
@@ -483,9 +479,11 @@ impl TCP {
                     self.established_handler(&packet, socket)?;
                 }
                 TcpStatus::CloseWait | TcpStatus::LastAck => {
+                    dbg!("CloseWait | LastAck handler");
                     socket.send_param.unacked_seq = packet.get_ack();
                 }
                 TcpStatus::FinWait1 => {
+                    dbg!("FinWait1 handler");
                     // TODO: まだデータは受け取らないといけない
 
                     if packet.get_flag() & tcpflags::ACK == 0 {
@@ -497,6 +495,7 @@ impl TCP {
                     if socket.send_param.next == socket.send_param.unacked_seq {
                         socket.status = TcpStatus::FinWait2;
                         if packet.get_flag() & tcpflags::FIN > 0 {
+                            socket.recv_param.next += 1;
                             socket.send_tcp_packet(
                                 socket.send_param.next,
                                 socket.recv_param.next,
@@ -508,6 +507,8 @@ impl TCP {
                     }
                 }
                 TcpStatus::FinWait2 => {
+                    dbg!("FinWait2 handler");
+
                     // TODO: まだデータは受け取らないといけない
                     if packet.get_flag() & tcpflags::ACK == 0 {
                         // ACKが立っていないパケットは破棄
@@ -516,6 +517,7 @@ impl TCP {
                     socket.send_param.unacked_seq = packet.get_ack();
                     socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
                     if packet.get_flag() & tcpflags::FIN > 0 {
+                        socket.recv_param.next += 1;
                         socket.send_tcp_packet(
                             socket.send_param.next,
                             socket.recv_param.next,
