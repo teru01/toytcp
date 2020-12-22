@@ -231,7 +231,7 @@ impl TCP {
                 MSS,
                 cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
             );
-            if send_size == 0 {
+            while send_size == 0 {
                 dbg!("recv buffer is full");
                 // バッファがいっぱいなので待つ
                 drop(table);
