@@ -74,6 +74,7 @@ pub struct RecvParam {
     pub next: u32,
     pub window: u16,
     pub initial_seq: u32, //初期受信seq
+    pub tail: u32,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -132,6 +133,7 @@ impl Socket {
                 initial_seq: 0,
                 next: 0,
                 window: SOCKET_BUFFER_SIZE as u16,
+                tail: 0,
             },
             status,
             send_buffer: vec![0; SOCKET_BUFFER_SIZE],

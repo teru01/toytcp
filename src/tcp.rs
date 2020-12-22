@@ -612,13 +612,20 @@ impl TCP {
             // バッファにおける読み込みのヘッド位置．
             let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
                 + (packet.get_seq() - socket.recv_param.next) as usize;
-            let copied_size = cmp::min(payload_len, socket.recv_param.window as usize);
+            let copied_size = cmp::min(payload_len, socket.recv_buffer.len() - offset);
             socket.recv_buffer[offset..offset + copied_size]
                 .copy_from_slice(&packet.payload()[..copied_size]);
+            socket.recv_param.tail =
+                cmp::max(socket.recv_param.tail, (offset + copied_size) as u32); // ロス再送で穴埋めされる時のためにmaxをとる
 
             // TODO 受信バッファ溢れの時どうする？以下は溢れない前提のコード
-            socket.recv_param.next = packet.get_seq() + copied_size as u32;
-            socket.recv_param.window -= copied_size as u16;
+            if packet.get_seq() == socket.recv_param.next {
+                // ロス・順序入れ替わり無しの場合のみrecv_param.nextを進められる
+                socket.recv_param.next = socket.recv_param.tail;
+                socket.recv_param.window -= (socket.recv_param.tail - offset as u32) as u16;
+            }
+            // ロスの時はこれではダメ，
+
             // TODO ウィンドウサイズも送る
             socket.send_tcp_packet(
                 socket.send_param.next,
