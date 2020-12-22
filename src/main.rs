@@ -55,9 +55,11 @@ fn connect() -> Result<()> {
     let tcp = TCP::new();
     let sock_id = tcp.connect("10.0.0.1".parse().unwrap(), 40000)?;
     loop {
+        dbg!("loop");
         // 入力データをソケットから送信。
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
+        dbg!("input: ", &input);
 
         tcp.send(sock_id, input.as_bytes())?;
 

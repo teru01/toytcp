@@ -202,9 +202,12 @@ impl TCP {
         // 非同期でACKを受けている（タイマースレッドで）なので，送信ウィンドウがとても大きい（スロースタートになってない）
         // 送信バッファなしでやる
         // 送信ウィンドウだけしかin flightにできない
+        dbg!("send");
         let mut cursor = 0;
         while cursor < buffer.len() {
+            dbg!("before lock");
             let mut table = self.sockets.write().unwrap();
+            dbg!("after lock");
             let mut socket = table
                 .get_mut(&sock_id)
                 .context(format!("no such socket: {:?}", sock_id))?;
@@ -408,6 +411,7 @@ impl TCP {
                                         .unwrap(); // TODO
                                     socket.status = TcpStatus::Established;
                                     dbg!("status: SynSend → Established");
+                                    self.publish_event(sock_id, TCPEventKind::ConnectionCompleted);
                                 } else {
                                     // to SYNRCVD
                                 }
