@@ -39,7 +39,8 @@ fn serve() -> Result<()> {
             loop {
                 let nbytes = cloned_tcp.receive(connected_socket, &mut buffer).unwrap();
                 if nbytes == 0 {
-                    dbg!("Connection closed.");
+                    dbg!("closing connection...");
+                    cloned_tcp.close(connected_socket).unwrap();
                     return;
                 }
                 print!("{}", str::from_utf8(&buffer[..nbytes]).unwrap());

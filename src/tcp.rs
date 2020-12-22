@@ -189,11 +189,20 @@ impl TCP {
     /// セグメントが到着次第すぐにreturnする
     /// 到着イベント発生→ロック取得→読み出し
     pub fn receive(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
-        self.wait_event(sock_id, TCPEventKind::DataArrived); // TODO: 到着した時だけじゃダメ．受信バッファにあるなら通過
         let mut table = self.sockets.write().unwrap();
-        let socket = table
+        let mut socket = table
             .get_mut(&sock_id)
             .context(format!("no such socket: {:?}", sock_id))?;
+        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
+        if received_size == 0 && socket.status != TcpStatus::CloseWait {
+            // CLOSEWAIT以外の時に受信がないなら待機
+            drop(table);
+            self.wait_event(sock_id, TCPEventKind::DataArrived); // TODO: 到着した時だけじゃダメ．受信バッファにあるなら通過
+            table = self.sockets.write().unwrap();
+            socket = table
+                .get_mut(&sock_id)
+                .context(format!("no such socket: {:?}", sock_id))?;
+        }
         let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
         let copy_size = cmp::min(buffer.len(), received_size);
         buffer[..copy_size].copy_from_slice(&socket.recv_buffer[..copy_size]);
@@ -201,11 +210,6 @@ impl TCP {
         dbg!(socket.recv_param.window, copy_size);
 
         socket.recv_param.window += copy_size as u16;
-        if socket.status == TcpStatus::CloseWait {
-            // 全て読んだらFINを処理しろ
-            // 1 FINだけのdata arrived
-            // 2 データと共にFIN
-        }
         Ok(copy_size)
     }
 
@@ -277,9 +281,10 @@ impl TCP {
             TcpStatus::CloseWait => {
                 socket.status = TcpStatus::LastAck;
                 drop(table);
-                self.wait_event(sock_id, TCPEventKind::ConnectionClosed);
+                self.wait_event(sock_id, TCPEventKind::ConnectionClosed); // タイムアウトつける
                 let mut table = self.sockets.write().unwrap();
                 table.remove(&sock_id);
+                dbg!("closed & removed", sock_id);
             }
             TcpStatus::Listen => {
                 table.remove(&sock_id);
@@ -468,7 +473,9 @@ impl TCP {
                 TcpStatus::Established => {
                     self.established_handler(&packet, socket)?;
                 }
-                // TcpStatus::
+                TcpStatus::CloseWait | TcpStatus::LastAck => {
+                    socket.send_param.unacked_seq = packet.get_ack();
+                }
                 _ => unimplemented!(),
             }
             drop(table);
