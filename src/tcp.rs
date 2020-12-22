@@ -96,7 +96,8 @@ impl TCP {
                         // 取り出したエントリがタイムアウトしてないなら，キューの以降のエントリもタイムアウトしてない
                         // 先頭に戻す
                         socket.retransmission_queue.push_front(item);
-                        continue;
+
+                        break; //
                     }
                     // ackされてなければ再送
                     if item.transmission_count < MAX_RETRANSMITTION {
@@ -108,7 +109,10 @@ impl TCP {
                             )),
                         )
                         .unwrap(); // TODO FIX
-                        dbg!("retransmit", &item.packet);
+                        dbg!(
+                            "retransmit",
+                            item.packet.get_seq() - socket.send_param.initial_seq
+                        );
                         let sent_size = sender
                             .send_to(item.packet.clone(), IpAddr::V4(socket.remote_addr))
                             .context(format!("failed to retransmit"))
@@ -116,6 +120,7 @@ impl TCP {
                         item.transmission_count += 1;
                         item.latest_transmission_time = SystemTime::now();
                         socket.retransmission_queue.push_back(item);
+                        break;
                     } else {
                         dbg!("reached MAX_RETRANSMITTION");
                     }
@@ -325,19 +330,27 @@ impl TCP {
         let mut packet_iter = transport::ipv4_packet_iter(&mut receiver);
         loop {
             // TODO: 最初にCtrl-C検出して受信スレッド終了処理したい
-            let (packet, remote_addr) = packet_iter.next()?; // TODO handling
+            let (packet, remote_addr) = packet_iter.next().unwrap(); // TODO handling
+            dbg!("recvd");
             let local_addr = packet.get_destination();
             let tcp_packet = match TcpPacket::new(packet.payload()) {
                 Some(p) => p,
-                None => continue,
+                None => {
+                    dbg!("none");
+                    continue;
+                }
             };
             let packet = TCPPacket::from(tcp_packet);
             let remote_addr = match remote_addr {
                 IpAddr::V4(addr) => addr,
-                _ => continue,
+                _ => {
+                    dbg!("none");
+                    continue;
+                }
             };
-            // dbg!("incoming from", &remote_addr, packet.get_src());
+            dbg!("incoming from", &remote_addr, packet.get_src());
             let mut table = self.sockets.write().unwrap();
+            dbg!("after table lock");
             let socket = match table.get_mut(&SockID(
                 local_addr,
                 remote_addr,
@@ -547,12 +560,12 @@ impl TCP {
         // !SYNチェック
 
         // 受け入れ
-        // dbg!(
-        //     "before accept",
-        //     socket.send_param.unacked_seq,
-        //     packet.get_ack(),
-        //     socket.send_param.unacked_seq
-        // );
+        dbg!(
+            "before accept",
+            socket.send_param.unacked_seq,
+            packet.get_ack(),
+            socket.send_param.next
+        );
         if socket.send_param.unacked_seq < packet.get_ack()
             && packet.get_ack() <= socket.send_param.next
         {
@@ -612,6 +625,7 @@ impl TCP {
                 &[],
             )?;
             self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
+            dbg!(packet.get_seq());
         }
         if packet.get_flag() & tcpflags::FIN > 0 {
             socket.recv_param.next = packet.get_seq() + 1;
