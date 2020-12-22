@@ -17,7 +17,6 @@ use std::time::{Duration, SystemTime};
 use std::{cmp, str};
 const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
-const WINDOW_SIZE: u16 = 65535;
 const MAX_RETRANSMITTION: u8 = 3;
 const RETRANSMITTION_TIMEOUT: u64 = 3;
 const MSS: usize = 1460;
@@ -255,7 +254,8 @@ impl TCP {
             cursor += send_size;
             socket.send_param.next += send_size as u32;
             socket.send_param.window -= send_size as u16;
-            // TODO: 必要な時だけスリープ
+            // 送信中にACKが入ってこれるようにしている．
+            // そうしないとsend_bufferが0になるまで必ず送り続けてブロックする
             drop(table);
             thread::sleep(Duration::from_millis(10));
         }

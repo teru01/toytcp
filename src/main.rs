@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use std::fs::{self, File};
 use std::sync::Arc;
 use std::{
     env,
-    io::{self, BufReader},
+    io::{self, prelude::*, BufReader},
     str,
 };
 use toytcp::packet::tcpflags;
@@ -19,16 +20,44 @@ fn main() -> Result<()> {
     match role {
         "server" => serve()?,
         "client" => connect()?,
+        "files" => fileserver()?,
+        "filec" => fileclient()?,
         _ => unimplemented!(),
     }
     // connect()?;
     Ok(())
 }
 
+fn fileserver() -> Result<()> {
+    let tcp = TCP::new();
+    let listening_socket = tcp.listen(toytcp::MY_IPADDR, 40000)?;
+    dbg!("listening..");
+    let cloned_tcp = tcp.clone();
+    loop {
+        let connected_socket = tcp.accept(listening_socket)?;
+        dbg!("accepted!", connected_socket.1, connected_socket.3);
+        let cloned_tcp = tcp.clone();
+
+        std::thread::spawn(move || {
+            let mut v = Vec::new();
+            let mut buffer = [0u8; 2000];
+            loop {
+                let nbytes = cloned_tcp.receive(connected_socket, &mut buffer).unwrap();
+                if nbytes == 0 {
+                    dbg!("closing connection...");
+                    cloned_tcp.close(connected_socket).unwrap();
+                    break;
+                }
+                v.extend_from_slice(&buffer[..nbytes]);
+            }
+            let mut f = fs::write("recv.txt", &v).unwrap();
+        });
+    }
+}
+
 fn serve() -> Result<()> {
     let tcp = TCP::new();
     let listening_socket = tcp.listen(toytcp::MY_IPADDR, 40000)?;
-    // let listening_socket = tcp.listen("192.168.69.100".parse().unwrap(), 40000)?;
     dbg!("listening..");
     let cloned_tcp = tcp.clone();
     loop {
