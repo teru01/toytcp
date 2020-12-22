@@ -50,9 +50,23 @@ fn fileserver() -> Result<()> {
                 }
                 v.extend_from_slice(&buffer[..nbytes]);
             }
-            let mut f = fs::write("recv.txt", &v).unwrap();
+            fs::write("/home/ono/tcp/recv.png", &v).unwrap();
         });
     }
+}
+
+fn fileclient() -> Result<()> {
+    let tcp = TCP::new();
+    let sock_id = tcp.connect("10.0.0.1".parse().unwrap(), 40000)?;
+    let cloned_tcp = tcp.clone();
+    ctrlc::set_handler(move || {
+        cloned_tcp.close(sock_id).unwrap();
+        std::process::exit(0);
+    })?;
+    let input = fs::read("/home/ono/tcp/send.png")?;
+    tcp.send(sock_id, &input)?;
+    tcp.close(sock_id).unwrap();
+    Ok(())
 }
 
 fn serve() -> Result<()> {
