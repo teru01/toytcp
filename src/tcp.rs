@@ -276,8 +276,16 @@ impl TCP {
             tcpflags::FIN | tcpflags::ACK,
             &[],
         )?;
+        socket.send_param.next += 1;
         match socket.status {
-            TcpStatus::Established => socket.status = TcpStatus::FinWait1,
+            TcpStatus::Established => {
+                socket.status = TcpStatus::FinWait1;
+                drop(table);
+                self.wait_event(sock_id, TCPEventKind::ConnectionClosed); // タイムアウトつける
+                let mut table = self.sockets.write().unwrap();
+                table.remove(&sock_id);
+                dbg!("closed & removed", sock_id);
+            }
             TcpStatus::CloseWait => {
                 socket.status = TcpStatus::LastAck;
                 drop(table);
@@ -475,6 +483,46 @@ impl TCP {
                 }
                 TcpStatus::CloseWait | TcpStatus::LastAck => {
                     socket.send_param.unacked_seq = packet.get_ack();
+                }
+                TcpStatus::FinWait1 => {
+                    // TODO: まだデータは受け取らないといけない
+
+                    if packet.get_flag() & tcpflags::ACK == 0 {
+                        // ACKが立っていないパケットは破棄
+                        return Ok(());
+                    }
+                    socket.send_param.unacked_seq = packet.get_ack();
+                    socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
+                    if socket.send_param.next == socket.send_param.unacked_seq {
+                        socket.status = TcpStatus::FinWait2;
+                        if packet.get_flag() & tcpflags::FIN > 0 {
+                            socket.send_tcp_packet(
+                                socket.send_param.next,
+                                socket.recv_param.next,
+                                tcpflags::ACK,
+                                &[],
+                            )?;
+                            self.publish_event(sock_id, TCPEventKind::ConnectionClosed);
+                        }
+                    }
+                }
+                TcpStatus::FinWait2 => {
+                    // TODO: まだデータは受け取らないといけない
+                    if packet.get_flag() & tcpflags::ACK == 0 {
+                        // ACKが立っていないパケットは破棄
+                        return Ok(());
+                    }
+                    socket.send_param.unacked_seq = packet.get_ack();
+                    socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
+                    if packet.get_flag() & tcpflags::FIN > 0 {
+                        socket.send_tcp_packet(
+                            socket.send_param.next,
+                            socket.recv_param.next,
+                            tcpflags::ACK,
+                            &[],
+                        )?;
+                        self.publish_event(sock_id, TCPEventKind::ConnectionClosed);
+                    }
                 }
                 _ => unimplemented!(),
             }

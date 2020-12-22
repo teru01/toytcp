@@ -43,7 +43,7 @@ fn serve() -> Result<()> {
                     cloned_tcp.close(connected_socket).unwrap();
                     return;
                 }
-                print!("{}", str::from_utf8(&buffer[..nbytes]).unwrap());
+                print!("> {}", str::from_utf8(&buffer[..nbytes]).unwrap());
                 cloned_tcp
                     .send(connected_socket, &buffer[..nbytes])
                     .unwrap();
@@ -55,6 +55,11 @@ fn serve() -> Result<()> {
 fn connect() -> Result<()> {
     let tcp = TCP::new();
     let sock_id = tcp.connect("10.0.0.1".parse().unwrap(), 40000)?;
+    let cloned_tcp = tcp.clone();
+    ctrlc::set_handler(move || {
+        cloned_tcp.close(sock_id).unwrap();
+        std::process::exit(0);
+    })?;
     loop {
         dbg!("loop");
         // 入力データをソケットから送信。
@@ -67,9 +72,8 @@ fn connect() -> Result<()> {
         // ソケットから受信したデータを表示。
         let mut buffer = vec![0; 1500];
         let n = tcp.receive(sock_id, &mut buffer)?;
-        print!("{}", str::from_utf8(&buffer[..n])?);
+        print!("> {}", str::from_utf8(&buffer[..n])?);
     }
-    Ok(())
 }
 
 // pub fn serve(address: &str) -> Result<(), failure::Error> {
