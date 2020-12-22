@@ -1,21 +1,20 @@
 use crate::packet::{tcpflags, TCPPacket};
 use crate::socket::{SockID, Socket, TcpStatus};
-use crate::MY_IPADDR;
 use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
+use pnet::packet::tcp::TcpPacket;
 use pnet::packet::Packet;
 use pnet::transport::{
     self, TransportChannelType, TransportProtocol, TransportReceiver, TransportSender,
 };
-use pnet::util;
 use rand::Rng;
-use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 use std::time::{Duration, SystemTime};
+use std::{cmp, str};
 const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
 const WINDOW_SIZE: u16 = 65535;
@@ -24,6 +23,7 @@ const RETRANSMITTION_TIMEOUT: u64 = 3;
 const MSS: usize = 1460;
 
 pub struct TCP {
+    // local_addr: Ipv4Addr,
     sockets: RwLock<HashMap<SockID, Socket>>,
     event_cond: (Mutex<Option<TCPEvent>>, Condvar),
 }
@@ -51,6 +51,7 @@ impl TCP {
     pub fn new() -> Arc<Self> {
         let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
+            // local_addr: "0.0.0.0".parse().unwrap(),
             sockets,
             event_cond: (Mutex::new(None), Condvar::new()),
         });
@@ -121,6 +122,7 @@ impl TCP {
 
     /// リスニングソケットを生成してIDを返す
     pub fn listen(&self, local_addr: Ipv4Addr, local_port: u16) -> Result<SockID> {
+        // self.local_addr = local_addr;
         let socket = Socket::new(
             local_addr,
             UNDETERMINED_IP_ADDR,
@@ -151,9 +153,16 @@ impl TCP {
 
     /// ターゲットに接続し，接続済みソケットのIDを返す
     pub fn connect(&self, addr: Ipv4Addr, port: u16) -> Result<SockID> {
+        // self.local_addr = ;
         let mut rng = rand::thread_rng();
         let local_port = rng.gen_range(40000..60000); // TODO: 利用されてないか？
-        let mut socket = Socket::new(MY_IPADDR, addr, local_port, port, TcpStatus::SynSent);
+        let mut socket = Socket::new(
+            get_source_addr_to(addr)?,
+            addr,
+            local_port,
+            port,
+            TcpStatus::SynSent,
+        ); // TODO: iprouteから抽出
         let iss = rng.gen_range(1..1 << 31);
         socket.send_param.initial_seq = iss; // ランダムにしないと，2回目以降SYNが返ってこなくなる（ACKだけ）
         socket.send_tcp_packet(socket.send_param.initial_seq, 0, tcpflags::SYN, &[])?;
@@ -182,7 +191,7 @@ impl TCP {
         socket.recv_buffer.copy_within(copy_size.., 0);
         dbg!(socket.recv_param.window, copy_size);
         socket.recv_param.window += copy_size as u16;
-        Ok(received_size)
+        Ok(copy_size)
     }
 
     /// バッファが空いてないとブロックする．受信側はバッファいっぱいにならないようにreadしておかないといけない
@@ -253,26 +262,27 @@ impl TCP {
         dbg!("begin recv thread");
         let (mut sender, mut receiver) = transport::transport_channel(
             65535,
-            TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
+            TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp), // IPv4
         )
         .unwrap(); // TODO FIX
-        let mut packet_iter = transport::tcp_packet_iter(&mut receiver);
+        let mut packet_iter = transport::ipv4_packet_iter(&mut receiver);
         loop {
             // TODO: 最初にCtrl-C検出して受信スレッド終了処理したい
             let (packet, remote_addr) = packet_iter.next()?; // TODO handling
-            let packet = TCPPacket::from(packet);
+            let local_addr = packet.get_destination();
+            let tcp_packet = match TcpPacket::new(packet.payload()) {
+                Some(p) => p,
+                None => continue,
+            };
+            let packet = TCPPacket::from(tcp_packet);
             let remote_addr = match remote_addr {
                 IpAddr::V4(addr) => addr,
                 _ => continue,
             };
             dbg!("incoming from", &remote_addr, packet.get_src());
             let mut table = self.sockets.write().unwrap();
-            // for k in table.keys() {
-            //     dbg!(k);
-            // }
-            // dbg!(MY_IPADDR, remote_addr, packet.get_dest(), packet.get_src());
             let socket = match table.get_mut(&SockID(
-                MY_IPADDR,
+                local_addr,
                 remote_addr,
                 packet.get_dest(),
                 packet.get_src(),
@@ -282,7 +292,7 @@ impl TCP {
                     socket // 接続済みソケット
                 }
                 None => match table.get_mut(&SockID(
-                    MY_IPADDR,
+                    local_addr,
                     UNDETERMINED_IP_ADDR,
                     packet.get_dest(),
                     UNDETERMINED_PORT,
@@ -292,6 +302,10 @@ impl TCP {
                         socket
                     } // リスニングソケット
                     None => {
+                        for k in table.keys() {
+                            dbg!(k);
+                        }
+                        dbg!(local_addr, remote_addr, packet.get_dest(), packet.get_src());
                         dbg!("SOCKET NOT FOUND");
                         continue;
                     }
@@ -474,4 +488,18 @@ impl TCP {
         *e = Some(TCPEvent::new(sock_id, kind));
         cvar.notify_all();
     }
+}
+
+fn get_source_addr_to(addr: Ipv4Addr) -> Result<Ipv4Addr> {
+    use std::process::Command;
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "ip route get {}| awk 'match($0, /src (([0-9]|\\.)*) /, a){{print a[1]}}'",
+            addr
+        ))
+        .output()?;
+    let ip = str::from_utf8(&output.stdout)?.trim();
+    dbg!("source addr", ip);
+    ip.parse().context("failed to parse source ip")
 }

@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use std::{io, str};
+use std::{
+    env,
+    io::{self, BufReader},
+    str,
+};
 use toytcp::packet::tcpflags;
 use toytcp::socket::{SockID, Socket};
 use toytcp::tcp::TCP;
@@ -10,7 +14,13 @@ fn main() -> Result<()> {
     // let _ = socket
     //     .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
     //     .context("send error")?;
-    serve()?;
+    let args: Vec<String> = env::args().collect();
+    let role: &str = &args[1];
+    match role {
+        "server" => serve()?,
+        "client" => connect()?,
+        _ => unimplemented!(),
+    }
     // connect()?;
     Ok(())
 }
@@ -41,23 +51,23 @@ fn serve() -> Result<()> {
     }
 }
 
-// fn connect() -> Result<()> {
-//     let tcp = TCP::new();
-//     tcp.connect("10.0.1.1".parse().unwrap(), 33333)?;
-//     loop {
-//         // 入力データをソケットから送信。
-//         let mut input = String::new();
-//         io::stdin().read_line(&mut input)?;
-//         stream.write_all(input.as_bytes())?;
+fn connect() -> Result<()> {
+    let tcp = TCP::new();
+    let sock_id = tcp.connect("10.0.0.1".parse().unwrap(), 40000)?;
+    loop {
+        // 入力データをソケットから送信。
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
 
-//         // ソケットから受信したデータを表示。
-//         let mut reader = BufReader::new(&stream);
-//         let mut buffer = Vec::new();
-//         reader.read_until(b'\n', &mut buffer)?;
-//         print!("{}", str::from_utf8(&buffer)?);
-//     }
-//     Ok(())
-// }
+        tcp.send(sock_id, input.as_bytes())?;
+
+        // ソケットから受信したデータを表示。
+        let mut buffer = vec![0; 1500];
+        let n = tcp.receive(sock_id, &mut buffer)?;
+        print!("{}", str::from_utf8(&buffer[..n])?);
+    }
+    Ok(())
+}
 
 // pub fn serve(address: &str) -> Result<(), failure::Error> {
 //     let listener = TcpListener::bind(address)?; /* [1] */
