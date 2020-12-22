@@ -17,7 +17,7 @@ use std::time::SystemTime;
 
 const TCP_DATA_OFFSET: u8 = 5;
 const CHANNEL_BOUND: usize = 1 << 16;
-const SOCKET_BUFFER_SIZE: usize = 50000;
+const SOCKET_BUFFER_SIZE: usize = 14600;
 
 // enum Socket {
 //     ListenSocket(Socket),
