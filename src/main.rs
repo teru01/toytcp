@@ -63,7 +63,7 @@ fn fileclient() -> Result<()> {
         cloned_tcp.close(sock_id).unwrap();
         std::process::exit(0);
     })?;
-    let input = fs::read("./send.jpg")?;
+    let input = fs::read("./send2.jpg")?;
     tcp.send(sock_id, &input)?;
     tcp.close(sock_id).unwrap();
     Ok(())

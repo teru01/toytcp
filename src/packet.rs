@@ -71,7 +71,7 @@ impl TCPPacket {
     }
 
     pub fn set_data_offset(&mut self, offset: u8) {
-        self.buffer[12] |= offset << 4; // TODO bit order
+        self.buffer[12] |= offset << 4;
     }
 
     pub fn set_reserved(&mut self, value: u8) {
