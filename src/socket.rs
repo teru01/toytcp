@@ -27,7 +27,6 @@ const SOCKET_BUFFER_SIZE: usize = 4380;
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
 pub struct SockID(pub Ipv4Addr, pub Ipv4Addr, pub u16, pub u16);
 
-#[derive(Debug)]
 pub struct Socket {
     pub local_addr: Ipv4Addr,
     pub remote_addr: Ipv4Addr,
@@ -42,6 +41,7 @@ pub struct Socket {
     pub synrecv_connection_channel: VecDeque<Socket>, // いらない
     pub connected_connection_queue: VecDeque<SockID>,
     pub listening_socket: Option<SockID>, // どのリスニングソケットから生まれたか？
+    pub sender: TransportSender,
 }
 
 #[derive(Clone, Debug)]
@@ -117,8 +117,12 @@ impl Socket {
         local_port: u16,
         remote_port: u16,
         status: TcpStatus,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let (mut sender, _) = transport::transport_channel(
+            65535,
+            TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
+        )?;
+        Ok(Self {
             local_addr,
             remote_addr: remote_addr,
             local_port,
@@ -142,7 +146,8 @@ impl Socket {
             synrecv_connection_channel: VecDeque::new(),
             connected_connection_queue: VecDeque::new(),
             listening_socket: None,
-        }
+            sender,
+        })
     }
 
     pub fn send_tcp_packet(
@@ -170,11 +175,8 @@ impl Socket {
             &self.remote_addr,
             IpNextHeaderProtocols::Tcp,
         ));
-        let (mut sender, _) = transport::transport_channel(
-            65535,
-            TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
-        )?; // TODO FIX
-        let sent_size = sender
+        let sent_size = self
+            .sender
             .send_to(tcp_packet.clone(), IpAddr::V4(self.remote_addr))
             .context(format!("failed to send: \n{:?}", tcp_packet))?;
 

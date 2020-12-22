@@ -102,18 +102,12 @@ impl TCP {
                     // ackされてなければ再送
                     if item.transmission_count < MAX_RETRANSMITTION {
                         // 再送
-                        let (mut sender, _) = transport::transport_channel(
-                            65535,
-                            TransportChannelType::Layer4(TransportProtocol::Ipv4(
-                                IpNextHeaderProtocols::Tcp,
-                            )),
-                        )
-                        .unwrap(); // TODO FIX
                         dbg!(
                             "retransmit",
                             item.packet.get_seq() - socket.send_param.initial_seq
                         );
-                        let sent_size = sender
+                        let sent_size = socket
+                            .sender
                             .send_to(item.packet.clone(), IpAddr::V4(socket.remote_addr))
                             .context(format!("failed to retransmit"))
                             .unwrap();
@@ -140,7 +134,7 @@ impl TCP {
             local_port,
             UNDETERMINED_PORT,
             TcpStatus::Listen,
-        );
+        )?;
         let mut lock = self.sockets.write().unwrap();
         let sock_id = socket.get_sock_id();
         lock.insert(sock_id, socket);
@@ -173,7 +167,7 @@ impl TCP {
             local_port,
             port,
             TcpStatus::SynSent,
-        );
+        )?;
         let iss = rng.gen_range(1..1 << 31);
         socket.send_param.initial_seq = iss; // ランダムにしないと，2回目以降SYNが返ってこなくなる（ACKだけ）
         socket.send_tcp_packet(socket.send_param.initial_seq, 0, tcpflags::SYN, &[])?;
@@ -328,11 +322,11 @@ impl TCP {
 
     fn receive_handler(&self) -> Result<()> {
         dbg!("begin recv thread");
-        let (mut sender, mut receiver) = transport::transport_channel(
+        let (_, mut receiver) = transport::transport_channel(
             65535,
             TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp), // IPv4
         )
-        .unwrap(); // TODO FIX
+        .unwrap();
         let mut packet_iter = transport::ipv4_packet_iter(&mut receiver);
         loop {
             // TODO: 最初にCtrl-C検出して受信スレッド終了処理したい
@@ -403,7 +397,7 @@ impl TCP {
                             socket.local_port,
                             packet.get_src(),
                             TcpStatus::SynRcvd,
-                        );
+                        )?;
                         connection_socket.recv_param.next = packet.get_seq() + 1;
                         connection_socket.recv_param.initial_seq = packet.get_seq();
                         connection_socket.send_param.initial_seq = 443322; // TODO random
