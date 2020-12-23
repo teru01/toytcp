@@ -333,7 +333,7 @@ impl TCP {
         dbg!("begin recv thread");
         let (_, mut receiver) = transport::transport_channel(
             65535,
-            TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp), // IPv4
+            TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp), // IPパケットレベルで取得
         )
         .unwrap();
         let mut packet_iter = transport::ipv4_packet_iter(&mut receiver);
@@ -342,12 +342,10 @@ impl TCP {
                 Ok((p, r)) => (p, r),
                 Err(_) => continue,
             };
-            dbg!("recvd");
             let local_addr = packet.get_destination();
             let tcp_packet = match TcpPacket::new(packet.payload()) {
                 Some(p) => p,
                 None => {
-                    dbg!("none");
                     continue;
                 }
             };
@@ -355,39 +353,27 @@ impl TCP {
             let remote_addr = match remote_addr {
                 IpAddr::V4(addr) => addr,
                 _ => {
-                    dbg!("none");
                     continue;
                 }
             };
             dbg!("incoming from", &remote_addr, packet.get_src());
             let mut table = self.sockets.write().unwrap();
-            dbg!("after table lock");
             let socket = match table.get_mut(&SockID(
                 local_addr,
                 remote_addr,
                 packet.get_dest(),
                 packet.get_src(),
             )) {
-                Some(socket) => {
-                    // dbg!("connected socket", socket.get_sock_id());
-                    socket // 接続済みソケット
-                }
+                Some(socket) => socket, // 接続済みソケット
                 None => match table.get_mut(&SockID(
                     local_addr,
                     UNDETERMINED_IP_ADDR,
                     packet.get_dest(),
                     UNDETERMINED_PORT,
                 )) {
-                    Some(socket) => {
-                        // dbg!("listening socket", socket.get_sock_id());
-                        socket
-                    } // リスニングソケット
-                    None => {
-                        // 該当しないものは無視
-                        continue;
-                    }
-                }, // return RST
-                   // unimplemented!();
+                    Some(socket) => socket, // リスニングソケット
+                    None => continue,       // 該当しないものは無視
+                },
             };
             // TODO checksum, ack検証
             let sock_id = socket.get_sock_id();
@@ -429,14 +415,12 @@ impl TCP {
             connection_socket.recv_param.initial_seq = packet.get_seq();
             connection_socket.send_param.initial_seq = rand::thread_rng().gen_range(1..1 << 31);
             connection_socket.send_param.window = packet.get_window_size();
-            connection_socket
-                .send_tcp_packet(
-                    connection_socket.send_param.initial_seq,
-                    connection_socket.recv_param.next,
-                    tcpflags::SYN | tcpflags::ACK,
-                    &[],
-                )
-                .unwrap(); // TODO retry
+            connection_socket.send_tcp_packet(
+                connection_socket.send_param.initial_seq,
+                connection_socket.recv_param.next,
+                tcpflags::SYN | tcpflags::ACK,
+                &[],
+            )?;
             connection_socket.send_param.next = connection_socket.send_param.initial_seq + 1;
             connection_socket.send_param.unacked_seq = connection_socket.send_param.initial_seq;
             connection_socket.listening_socket = Some(listening_socket.get_sock_id());
@@ -499,14 +483,12 @@ impl TCP {
                     socket.send_param.unacked_seq = packet.get_ack();
                     socket.send_param.window = packet.get_window_size();
                     if socket.send_param.unacked_seq > socket.send_param.initial_seq {
-                        socket
-                            .send_tcp_packet(
-                                socket.send_param.next,
-                                socket.recv_param.next,
-                                tcpflags::ACK,
-                                &[],
-                            )
-                            .unwrap(); // TODO
+                        socket.send_tcp_packet(
+                            socket.send_param.next,
+                            socket.recv_param.next,
+                            tcpflags::ACK,
+                            &[],
+                        )?;
                         socket.status = TcpStatus::Established;
                         if let None = socket.retransmission_queue.pop_front() {
                             // 最初のSYNが入っている
