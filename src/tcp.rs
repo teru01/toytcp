@@ -1,5 +1,6 @@
-use crate::packet::{tcpflags, TCPPacket};
+use crate::packet::TCPPacket;
 use crate::socket::{SockID, Socket, TcpStatus};
+use crate::tcpflags;
 use anyhow::{Context, Result};
 use pnet::packet::{ip::IpNextHeaderProtocols, tcp::TcpPacket, Packet};
 use pnet::transport::{self, TransportChannelType};
