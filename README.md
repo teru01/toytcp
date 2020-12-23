@@ -21,31 +21,31 @@ $ ./setup.sh
 # build & run 
 
 ```
-$ cargo build
+$ cargo build --examples
 ```
 
 ## echo-server & client
 
 server
 ```
-sudo ip netns exec host1 sudo ./target/debug/toytcp server
+$ sudo ip netns exec host1 sudo ./target/debug/examples/echoserver 10.0.0.1 30000
 ```
 
 client
 ```
-sudo ip netns exec host1 sudo ./target/debug/toytcp client
+$ sudo ip netns exec host2 sudo ./target/debug/examples/echoclient 10.0.0.1 30000
 ```
 
 ## file upload
 
 server
 ```
-sudo ip netns exec host1 sudo ./target/debug/toytcp files
+$ sudo ip netns exec host1 sudo ./target/debug/examples/fileserver 10.0.0.1 30000 <save file name>
 ```
 
 client
 ```
-sudo ip netns exec host1 sudo ./target/debug/toytcp filec
+$ sudo ip netns exec host2 sudo ./target/debug/examples/fileclient 10.0.0.1 30000 <send file name>
 ```
 
 ## simulate packet loss
