@@ -121,6 +121,7 @@ impl TCP {
                     }
                 }
             }
+            // ロックを外して待機する
             drop(table);
             thread::sleep(Duration::from_millis(500));
         }
@@ -186,8 +187,8 @@ impl TCP {
         let mut table = self.sockets.write().unwrap();
         let sock_id = socket.get_sock_id();
         table.insert(sock_id, socket);
+        // ロックを外してイベントの待機．受信スレッドがロックを取得できるようにするため．
         drop(table);
-
         self.wait_event(sock_id, TCPEventKind::ConnectionCompleted);
         Ok(sock_id)
     }
@@ -206,6 +207,7 @@ impl TCP {
                 TcpStatus::CloseWait | TcpStatus::LastAck | TcpStatus::TimeWait => break,
                 _ => {}
             }
+            // ロックを外してイベントの待機．受信スレッドがロックを取得できるようにするため．
             drop(table);
             dbg!("waiting incoming data");
             self.wait_event(sock_id, TCPEventKind::DataArrived);
@@ -245,8 +247,8 @@ impl TCP {
                 cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
             );
             while send_size == 0 {
-                dbg!("recv buffer is full");
-                // バッファがいっぱいなので待つ
+                dbg!("unable to slide send window");
+                // ロックを外してイベントの待機．受信スレッドがロックを取得できるようにするため．
                 drop(table);
                 self.wait_event(sock_id, TCPEventKind::Acked);
                 table = self.sockets.write().unwrap();
@@ -272,7 +274,7 @@ impl TCP {
             // 送信中にACKが入ってこれるようにしている．
             // そうしないとsend_bufferが0になるまで必ず送り続けてブロックする
             drop(table);
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(1));
         }
         Ok(())
     }
@@ -292,6 +294,7 @@ impl TCP {
         match socket.status {
             TcpStatus::Established => {
                 socket.status = TcpStatus::FinWait1;
+                // ロックを外してイベントの待機．受信スレッドがロックを取得できるようにするため．
                 drop(table);
                 self.wait_event(sock_id, TCPEventKind::ConnectionClosed);
                 let mut table = self.sockets.write().unwrap();
@@ -300,6 +303,7 @@ impl TCP {
             }
             TcpStatus::CloseWait => {
                 socket.status = TcpStatus::LastAck;
+                // ロックを外してイベントの待機．受信スレッドがロックを取得できるようにするため．
                 drop(table);
                 self.wait_event(sock_id, TCPEventKind::ConnectionClosed);
                 let mut table = self.sockets.write().unwrap();

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::{
     env,
     io::{self, prelude::*, BufReader},
+    net::Ipv4Addr,
     str,
 };
 use toytcp::packet::tcpflags;
@@ -30,7 +31,7 @@ fn main() -> Result<()> {
 
 fn fileserver() -> Result<()> {
     let tcp = TCP::new();
-    let listening_socket = tcp.listen(toytcp::MY_IPADDR, 40000)?;
+    let listening_socket = tcp.listen(Ipv4Addr::new(10, 0, 0, 1), 40000)?;
     dbg!("listening..");
     let cloned_tcp = tcp.clone();
     loop {
@@ -63,7 +64,7 @@ fn fileclient() -> Result<()> {
         cloned_tcp.close(sock_id).unwrap();
         std::process::exit(0);
     })?;
-    let input = fs::read("./send2.jpg")?;
+    let input = fs::read("./send.jpg")?;
     tcp.send(sock_id, &input)?;
     tcp.close(sock_id).unwrap();
     Ok(())
@@ -71,7 +72,7 @@ fn fileclient() -> Result<()> {
 
 fn serve() -> Result<()> {
     let tcp = TCP::new();
-    let listening_socket = tcp.listen(toytcp::MY_IPADDR, 40000)?;
+    let listening_socket = tcp.listen(Ipv4Addr::new(10, 0, 0, 1), 40000)?;
     dbg!("listening..");
     let cloned_tcp = tcp.clone();
     loop {
