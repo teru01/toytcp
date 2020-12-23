@@ -531,6 +531,10 @@ impl TCP {
         dbg!("established handler");
         // !RSTならCLOSE
         // !SYNチェック
+        if packet.get_flag() & tcpflags::ACK == 0 {
+            // ACKが立っていないパケットは破棄
+            return Ok(());
+        }
 
         // 受け入れ
         dbg!(
@@ -539,64 +543,7 @@ impl TCP {
             packet.get_ack(),
             socket.send_param.next
         );
-        if socket.send_param.unacked_seq < packet.get_ack()
-            && packet.get_ack() <= socket.send_param.next
-        {
-            socket.send_param.unacked_seq = packet.get_ack();
-            self.delete_acked_segment_from_retransmission_queue(socket);
-        } else if socket.send_param.next < packet.get_ack() {
-            // 未送信セグメントに対するackは破棄
-            dbg!(
-                "invalid ack num",
-                packet.get_ack(),
-                socket.send_param.unacked_seq
-            );
-            // !ACKを送る
-            return Ok(());
-        }
-        // 重複のACKは無視
-        if packet.get_flag() & tcpflags::ACK == 0 {
-            // ACKが立っていないパケットは破棄
-            return Ok(());
-        }
-
-        let payload_len = packet.payload().len();
-        if payload_len > 0 {
-            // バッファにおける読み込みのヘッド位置．
-            dbg!(
-                // offset,
-                socket.recv_buffer.len(),
-                socket.recv_param.window,
-                packet.get_seq(),
-                socket.recv_param.next
-            );
-            let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
-                + (packet.get_seq() - socket.recv_param.next) as usize;
-            let copied_size = cmp::min(payload_len, socket.recv_buffer.len() - offset);
-            socket.recv_buffer[offset..offset + copied_size]
-                .copy_from_slice(&packet.payload()[..copied_size]);
-            socket.recv_param.tail = cmp::max(
-                socket.recv_param.tail,
-                packet.get_seq() + copied_size as u32,
-            ); // ロス再送で穴埋めされる時のためにmaxをとる
-
-            // TODO 受信バッファ溢れの時どうする？以下は溢れない前提のコード
-            if packet.get_seq() == socket.recv_param.next {
-                // ロス・順序入れ替わり無しの場合のみrecv_param.nextを進められる
-                socket.recv_param.next = socket.recv_param.tail;
-                socket.recv_param.window -= (socket.recv_param.tail - packet.get_seq()) as u16;
-            }
-            // ロスの時はこれではダメ，
-
-            socket.send_tcp_packet(
-                socket.send_param.next,
-                socket.recv_param.next,
-                tcpflags::ACK,
-                &[],
-            )?;
-            self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
-            dbg!(packet.get_seq());
-        }
+        self.process_ack_segment(socket, &packet)?;
         if packet.get_flag() & tcpflags::FIN > 0 {
             socket.recv_param.next = packet.get_seq() + 1;
             socket.send_tcp_packet(
@@ -613,6 +560,61 @@ impl TCP {
         Ok(())
     }
 
+    fn process_ack_segment(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
+        if socket.send_param.unacked_seq < packet.get_ack()
+            && packet.get_ack() <= socket.send_param.next
+        {
+            socket.send_param.unacked_seq = packet.get_ack();
+            self.delete_acked_segment_from_retransmission_queue(socket);
+        } else if socket.send_param.next < packet.get_ack() {
+            // 未送信セグメントに対するackは破棄
+            dbg!(
+                "invalid ack num",
+                packet.get_ack(),
+                socket.send_param.unacked_seq
+            );
+            // !ACKを送る
+            return Ok(());
+        }
+        // 重複のACKは無視
+
+        if packet.payload().len() > 0 {
+            // バッファにおける読み込みのヘッド位置．
+            dbg!(
+                // offset,
+                socket.recv_buffer.len(),
+                socket.recv_param.window,
+                packet.get_seq(),
+                socket.recv_param.next
+            );
+            let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
+                + (packet.get_seq() - socket.recv_param.next) as usize;
+            let copied_size = cmp::min(packet.payload().len(), socket.recv_buffer.len() - offset);
+            socket.recv_buffer[offset..offset + copied_size]
+                .copy_from_slice(&packet.payload()[..copied_size]);
+            socket.recv_param.tail = cmp::max(
+                socket.recv_param.tail,
+                packet.get_seq() + copied_size as u32,
+            ); // ロス再送で穴埋めされる時のためにmaxをとる
+
+            // TODO 受信バッファ溢れの時どうする？以下は溢れない前提のコード
+            if packet.get_seq() == socket.recv_param.next {
+                // ロス・順序入れ替わり無しの場合のみrecv_param.nextを進められる
+                socket.recv_param.next = socket.recv_param.tail;
+                socket.recv_param.window -= (socket.recv_param.tail - packet.get_seq()) as u16;
+            }
+
+            socket.send_tcp_packet(
+                socket.send_param.next,
+                socket.recv_param.next,
+                tcpflags::ACK,
+                &[],
+            )?;
+            self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
+        }
+        Ok(())
+    }
+
     fn close_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("CloseWait | LastAck handler");
         socket.send_param.unacked_seq = packet.get_ack();
@@ -621,14 +623,12 @@ impl TCP {
 
     fn finwait1_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("FinWait1 handler");
-        // TODO: まだデータは受け取らないといけない
-
         if packet.get_flag() & tcpflags::ACK == 0 {
             // ACKが立っていないパケットは破棄
             return Ok(());
         }
-        socket.send_param.unacked_seq = packet.get_ack();
-        socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
+        self.process_ack_segment(socket, &packet)?;
+
         if socket.send_param.next == socket.send_param.unacked_seq {
             socket.status = TcpStatus::FinWait2;
             if packet.get_flag() & tcpflags::FIN > 0 {
@@ -647,14 +647,12 @@ impl TCP {
 
     fn finwait2_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("FinWait2 handler");
-
-        // TODO: まだデータは受け取らないといけない
         if packet.get_flag() & tcpflags::ACK == 0 {
             // ACKが立っていないパケットは破棄
             return Ok(());
         }
-        socket.send_param.unacked_seq = packet.get_ack();
-        socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
+        self.process_ack_segment(socket, &packet)?;
+
         if packet.get_flag() & tcpflags::FIN > 0 {
             socket.recv_param.next += 1;
             socket.send_tcp_packet(
