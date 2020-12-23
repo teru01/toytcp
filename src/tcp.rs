@@ -409,7 +409,8 @@ impl TCP {
                         )?;
                         connection_socket.recv_param.next = packet.get_seq() + 1;
                         connection_socket.recv_param.initial_seq = packet.get_seq();
-                        connection_socket.send_param.initial_seq = 443322; // TODO random
+                        connection_socket.send_param.initial_seq =
+                            rand::thread_rng().gen_range(1..1 << 31);
                         connection_socket.send_param.window = packet.get_window_size();
                         connection_socket
                             .send_tcp_packet(
