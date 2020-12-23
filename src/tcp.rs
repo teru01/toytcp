@@ -376,7 +376,10 @@ impl TCP {
                     None => continue,       // 該当しないものは無視
                 },
             };
-            // TODO checksum, ack検証
+            if !packet.is_correct_checksum(local_addr, remote_addr) {
+                dbg!("invalid checksum");
+                continue;
+            }
             let sock_id = socket.get_sock_id();
             if let Err(error) = match socket.status {
                 TcpStatus::Listen => self.listen_handler(table, sock_id, &packet, remote_addr),

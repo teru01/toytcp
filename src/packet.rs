@@ -1,5 +1,9 @@
+use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::{tcp::TcpPacket, Packet};
+use pnet::util;
+
 use std::fmt::{self, Debug};
+use std::net::Ipv4Addr;
 const TCP_HEADER_SIZE: usize = 20;
 
 #[derive(Clone)]
@@ -93,6 +97,18 @@ impl TCPPacket {
     pub fn set_payload(&mut self, payload: &[u8]) {
         self.buffer[TCP_HEADER_SIZE..TCP_HEADER_SIZE + payload.len() as usize]
             .copy_from_slice(payload)
+    }
+
+    pub fn is_correct_checksum(&self, local_addr: Ipv4Addr, remote_addr: Ipv4Addr) -> bool {
+        self.get_checksum()
+            == util::ipv4_checksum(
+                &self.packet(),
+                8,
+                &[],
+                &local_addr,
+                &remote_addr,
+                IpNextHeaderProtocols::Tcp,
+            )
     }
 }
 
