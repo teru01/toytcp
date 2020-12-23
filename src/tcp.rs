@@ -589,27 +589,28 @@ impl TCP {
             );
             let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
                 + (packet.get_seq() - socket.recv_param.next) as usize;
-            let copied_size = cmp::min(packet.payload().len(), socket.recv_buffer.len() - offset);
-            socket.recv_buffer[offset..offset + copied_size]
-                .copy_from_slice(&packet.payload()[..copied_size]);
-            socket.recv_param.tail = cmp::max(
-                socket.recv_param.tail,
-                packet.get_seq() + copied_size as u32,
-            ); // ロス再送で穴埋めされる時のためにmaxをとる
+            let copy_size = cmp::min(packet.payload().len(), socket.recv_buffer.len() - offset);
+            socket.recv_buffer[offset..offset + copy_size]
+                .copy_from_slice(&packet.payload()[..copy_size]);
+            socket.recv_param.tail =
+                cmp::max(socket.recv_param.tail, packet.get_seq() + copy_size as u32); // ロス再送で穴埋めされる時のためにmaxをとる
 
-            // TODO 受信バッファ溢れの時どうする？以下は溢れない前提のコード
             if packet.get_seq() == socket.recv_param.next {
                 // ロス・順序入れ替わり無しの場合のみrecv_param.nextを進められる
                 socket.recv_param.next = socket.recv_param.tail;
                 socket.recv_param.window -= (socket.recv_param.tail - packet.get_seq()) as u16;
             }
-
-            socket.send_tcp_packet(
-                socket.send_param.next,
-                socket.recv_param.next,
-                tcpflags::ACK,
-                &[],
-            )?;
+            if copy_size > 0 {
+                socket.send_tcp_packet(
+                    socket.send_param.next,
+                    socket.recv_param.next,
+                    tcpflags::ACK,
+                    &[],
+                )?;
+            } else {
+                // 受信バッファが溢れた時はセグメントを破棄
+                dbg!("recv buffer overflow");
+            }
             self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
         }
         Ok(())
