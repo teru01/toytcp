@@ -7,7 +7,7 @@ use pnet::packet::Packet;
 use pnet::transport::{
     self, TransportChannelType, TransportProtocol, TransportReceiver, TransportSender,
 };
-use rand::Rng;
+use rand::{rngs::ThreadRng, Rng};
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -156,15 +156,24 @@ impl TCP {
             .context("no connected socket")?)
     }
 
+    fn select_unused_port(&self, rng: &mut ThreadRng) -> Result<u16> {
+        for _ in 0..20000 {
+            let local_port = rng.gen_range(40000..60000);
+            let table = self.sockets.read().unwrap();
+            if table.keys().all(|k| local_port != k.2) {
+                return Ok(local_port);
+            }
+        }
+        anyhow::bail!("no available port found.");
+    }
+
     /// ターゲットに接続し，接続済みソケットのIDを返す
     pub fn connect(&self, addr: Ipv4Addr, port: u16) -> Result<SockID> {
-        // self.local_addr = ;
         let mut rng = rand::thread_rng();
-        let local_port = rng.gen_range(40000..60000); // TODO: 利用されてないか？
         let mut socket = Socket::new(
             get_source_addr_to(addr)?,
             addr,
-            local_port,
+            self.select_unused_port(&mut rng)?,
             port,
             TcpStatus::SynSent,
         )?;
