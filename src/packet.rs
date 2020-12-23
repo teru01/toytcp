@@ -1,5 +1,4 @@
-use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::{tcp::TcpPacket, Packet};
+use pnet::packet::{ip::IpNextHeaderProtocols, tcp::TcpPacket, Packet};
 use pnet::util;
 
 use std::fmt::{self, Debug};
@@ -19,8 +18,6 @@ impl TCPPacket {
     }
 
     pub fn get_src(&self) -> u16 {
-        // use std::convert::TryInto;
-        // u16::from_be_bytes(self.buffer[0..2].try_into().unwrap())
         u16::from_be_bytes([self.buffer[0], self.buffer[1]])
     }
 
@@ -78,10 +75,6 @@ impl TCPPacket {
         self.buffer[12] |= offset << 4;
     }
 
-    pub fn set_reserved(&mut self, value: u8) {
-        self.buffer[12] |= value;
-    }
-
     pub fn set_flag(&mut self, flag: u8) {
         self.buffer[13] = flag;
     }
@@ -130,7 +123,7 @@ impl Debug for TCPPacket {
         src: {}
         dst: {}
         flag: {}
-        payload: {}",
+        payload_len: {}",
             self.get_src(),
             self.get_dest(),
             tcpflags::flag_to_string(self.get_flag()),
@@ -157,6 +150,7 @@ pub mod tcpflags {
     pub const SYN: u8 = 1 << 1;
     pub const FIN: u8 = 1;
 
+    /// TCP flagを文字列に変換する
     pub fn flag_to_string(flag: u8) -> String {
         let mut flag_str = String::new();
         if flag & SYN > 0 {

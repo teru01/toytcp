@@ -1,7 +1,6 @@
 use crate::packet::{tcpflags, TCPPacket};
 use anyhow::{Context, Result};
-use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::Packet;
+use pnet::packet::{ip::IpNextHeaderProtocols, Packet};
 use pnet::transport::{self, TransportChannelType, TransportProtocol, TransportSender};
 use pnet::util;
 use std::collections::VecDeque;
@@ -9,14 +8,8 @@ use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::SystemTime;
 
-const TCP_DATA_OFFSET: u8 = 5;
 const SOCKET_BUFFER_SIZE: usize = 4380;
 
-// enum Socket {
-//     ListenSocket(Socket),
-//     ConnectionSocket(Socket),
-// }
-// srcIP, destIP, srcPort, destPort
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
 pub struct SockID(pub Ipv4Addr, pub Ipv4Addr, pub u16, pub u16);
 
@@ -28,12 +21,10 @@ pub struct Socket {
     pub send_param: SendParam,
     pub recv_param: RecvParam,
     pub status: TcpStatus,
-    pub send_buffer: Vec<u8>,
     pub recv_buffer: Vec<u8>,
     pub retransmission_queue: VecDeque<RetransmissionQueueEntry>,
-    pub synrecv_connection_channel: VecDeque<Socket>, // いらない
-    pub connected_connection_queue: VecDeque<SockID>,
-    pub listening_socket: Option<SockID>, // どのリスニングソケットから生まれたか？
+    pub connected_connection_queue: VecDeque<SockID>, // 接続済みソケットを保持するキュー．リスニングソケットのみ使用．
+    pub listening_socket: Option<SockID>, // 生成元のリスニングソケット．接続済みソケットのみ使用
     pub sender: TransportSender,
 }
 
@@ -54,20 +45,20 @@ impl RetransmissionQueueEntry {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SendParam {
-    pub unacked_seq: u32, //未ACK送信
-    pub next: u32,        //次の送信
-    pub window: u16,
-    pub initial_seq: u32, //初期送信seq
+    pub unacked_seq: u32, // 送信後まだackされていないseqの先頭
+    pub next: u32,        // 次の送信
+    pub window: u16,      // 送信ウィンドウサイズ
+    pub initial_seq: u32, // 初期送信seq
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RecvParam {
-    pub next: u32,
-    pub window: u16,
-    pub initial_seq: u32, //初期受信seq
-    pub tail: u32,
+    pub next: u32,        // 次受信するseq
+    pub window: u16,      // 受信ウィンドウ
+    pub initial_seq: u32, // 初期受信seq
+    pub tail: u32,        // 受信seqの最後尾
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -78,11 +69,9 @@ pub enum TcpStatus {
     Established,
     FinWait1,
     FinWait2,
-    Closing,
     TimeWait,
     CloseWait,
     LastAck,
-    Closed,
 }
 
 impl Display for TcpStatus {
@@ -90,15 +79,13 @@ impl Display for TcpStatus {
         match self {
             TcpStatus::Listen => write!(f, "LISTEN"),
             TcpStatus::SynSent => write!(f, "SYNSENT"),
-            TcpStatus::SynRcvd => write!(f, "SynRcvd"),
+            TcpStatus::SynRcvd => write!(f, "SYNRCVD"),
             TcpStatus::Established => write!(f, "ESTABLISHED"),
             TcpStatus::FinWait1 => write!(f, "FINWAIT1"),
             TcpStatus::FinWait2 => write!(f, "FINWAIT2"),
-            TcpStatus::Closing => write!(f, "CLOSING"),
             TcpStatus::TimeWait => write!(f, "TIMEWAIT"),
             TcpStatus::CloseWait => write!(f, "CLOSEWAIT"),
             TcpStatus::LastAck => write!(f, "LASTACK"),
-            TcpStatus::Closed => write!(f, "CLOSED"),
         }
     }
 }
@@ -133,10 +120,8 @@ impl Socket {
                 tail: 0,
             },
             status,
-            send_buffer: vec![0; SOCKET_BUFFER_SIZE],
             recv_buffer: vec![0; SOCKET_BUFFER_SIZE],
             retransmission_queue: VecDeque::new(),
-            synrecv_connection_channel: VecDeque::new(),
             connected_connection_queue: VecDeque::new(),
             listening_socket: None,
             sender,
@@ -155,11 +140,10 @@ impl Socket {
         tcp_packet.set_dest(self.remote_port);
         tcp_packet.set_seq(seq);
         tcp_packet.set_ack(ack);
-        tcp_packet.set_data_offset(TCP_DATA_OFFSET);
+        tcp_packet.set_data_offset(5);
         tcp_packet.set_flag(flag);
         tcp_packet.set_window_size(self.recv_param.window);
         tcp_packet.set_payload(payload);
-        // tcp_packet.set_reserved(2);
         tcp_packet.set_checksum(util::ipv4_checksum(
             &tcp_packet.packet(),
             8,
@@ -173,32 +157,13 @@ impl Socket {
             .send_to(tcp_packet.clone(), IpAddr::V4(self.remote_addr))
             .context(format!("failed to send: \n{:?}", tcp_packet))?;
 
-        dbg!("send", &tcp_packet);
+        dbg!("sent", &tcp_packet);
         if !payload.is_empty() || tcp_packet.get_flag() != tcpflags::ACK {
             self.retransmission_queue
                 .push_back(RetransmissionQueueEntry::new(tcp_packet));
         }
         Ok(sent_size)
     }
-
-    // pub fn send_until(
-    //     &mut self,
-    //     max: usize,
-    //     seq: u32,
-    //     ack: u32,
-    //     flag: u8,
-    //     payload: &[u8],
-    // ) -> Result<()> {
-    //     let mut n = 0;
-    //     while let Err(e) = self.send_tcp_packet(seq, ack, flag, payload).as_ref() {
-    //         dbg!(e);
-    //         n += 1;
-    //         if n >= max {
-    //             return Err(*e);
-    //         }
-    //     }
-    //     Ok(())
-    // }
 
     pub fn get_sock_id(&self) -> SockID {
         SockID(

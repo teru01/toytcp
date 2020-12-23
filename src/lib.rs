@@ -1,3 +1,3 @@
-pub mod packet;
-pub mod socket;
+mod packet;
+mod socket;
 pub mod tcp;
