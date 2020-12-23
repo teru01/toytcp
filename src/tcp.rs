@@ -115,7 +115,7 @@ impl TCP {
             }
             // ロックを外して待機する
             drop(table);
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(100));
         }
     }
 
@@ -440,12 +440,6 @@ impl TCP {
         dbg!("synrcvd handler");
         let socket = table.get_mut(&sock_id).unwrap();
 
-        // SYNを受信した際は接続をリセット
-        if packet.get_flag() & tcpflags::SYN > 0 {
-            table.remove(&sock_id);
-            return Ok(());
-        }
-
         if packet.get_flag() & tcpflags::ACK > 0 {
             if socket.send_param.unacked_seq <= packet.get_ack()
                 && packet.get_ack() <= socket.send_param.next
@@ -522,23 +516,25 @@ impl TCP {
         }
     }
 
+    /// ESTABLISHED状態のソケットに到着したパケットの処理
     fn established_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("established handler");
-        // !RSTならCLOSE
-        // !SYNチェック
+        if socket.send_param.unacked_seq < packet.get_ack()
+            && packet.get_ack() <= socket.send_param.next
+        {
+            socket.send_param.unacked_seq = packet.get_ack();
+            self.delete_acked_segment_from_retransmission_queue(socket);
+        } else if socket.send_param.next < packet.get_ack() {
+            // 未送信セグメントに対するackは破棄
+            return Ok(());
+        }
         if packet.get_flag() & tcpflags::ACK == 0 {
             // ACKが立っていないパケットは破棄
             return Ok(());
         }
-
-        // 受け入れ
-        dbg!(
-            "before accept",
-            socket.send_param.unacked_seq,
-            packet.get_ack(),
-            socket.send_param.next
-        );
-        self.process_ack_segment(socket, &packet)?;
+        if !packet.payload().is_empty() {
+            self.process_payload(socket, &packet)?;
+        }
         if packet.get_flag() & tcpflags::FIN > 0 {
             socket.recv_param.next = packet.get_seq() + 1;
             socket.send_tcp_packet(
@@ -547,32 +543,14 @@ impl TCP {
                 tcpflags::ACK,
                 &[],
             )?;
-            // ここでFINを送って直接LAST-ACKに遷移するのもあり
-            // ソケットの送信ウィンドウにデータが残ってしまうので？ 明示的にFINさせよう
             socket.status = TcpStatus::CloseWait;
             self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
         }
         Ok(())
     }
 
-    fn process_ack_segment(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
-        if socket.send_param.unacked_seq < packet.get_ack()
-            && packet.get_ack() <= socket.send_param.next
-        {
-            socket.send_param.unacked_seq = packet.get_ack();
-            self.delete_acked_segment_from_retransmission_queue(socket);
-        } else if socket.send_param.next < packet.get_ack() {
-            // 未送信セグメントに対するackは破棄
-            dbg!(
-                "invalid ack num",
-                packet.get_ack(),
-                socket.send_param.unacked_seq
-            );
-            // !ACKを送る
-            return Ok(());
-        }
-        // 重複のACKは無視
-
+    ///
+    fn process_payload(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         if !packet.payload().is_empty() {
             // バッファにおける読み込みのヘッド位置．
             dbg!(
@@ -619,11 +597,22 @@ impl TCP {
 
     fn finwait1_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("FinWait1 handler");
+        if socket.send_param.unacked_seq < packet.get_ack()
+            && packet.get_ack() <= socket.send_param.next
+        {
+            socket.send_param.unacked_seq = packet.get_ack();
+            self.delete_acked_segment_from_retransmission_queue(socket);
+        } else if socket.send_param.next < packet.get_ack() {
+            // 未送信セグメントに対するackは破棄
+            return Ok(());
+        }
         if packet.get_flag() & tcpflags::ACK == 0 {
             // ACKが立っていないパケットは破棄
             return Ok(());
         }
-        self.process_ack_segment(socket, &packet)?;
+        if !packet.payload().is_empty() {
+            self.process_payload(socket, &packet)?;
+        }
 
         if socket.send_param.next == socket.send_param.unacked_seq {
             socket.status = TcpStatus::FinWait2;
@@ -643,11 +632,22 @@ impl TCP {
 
     fn finwait2_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("FinWait2 handler");
+        if socket.send_param.unacked_seq < packet.get_ack()
+            && packet.get_ack() <= socket.send_param.next
+        {
+            socket.send_param.unacked_seq = packet.get_ack();
+            self.delete_acked_segment_from_retransmission_queue(socket);
+        } else if socket.send_param.next < packet.get_ack() {
+            // 未送信セグメントに対するackは破棄
+            return Ok(());
+        }
         if packet.get_flag() & tcpflags::ACK == 0 {
             // ACKが立っていないパケットは破棄
             return Ok(());
         }
-        self.process_ack_segment(socket, &packet)?;
+        if !packet.payload().is_empty() {
+            self.process_payload(socket, &packet)?;
+        }
 
         if packet.get_flag() & tcpflags::FIN > 0 {
             socket.recv_param.next += 1;

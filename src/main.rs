@@ -9,10 +9,6 @@ use std::{
 use toytcp::tcp::TCP;
 
 fn main() -> Result<()> {
-    // let mut socket = Socket::new("127.0.0.1".parse().unwrap())?;
-    // let _ = socket
-    //     .send_tcp_packet(22222, 44444, tcpflags::ACK, &[])
-    //     .context("send error")?;
     let args: Vec<String> = env::args().collect();
     let role: &str = &args[1];
     match role {
