@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 use std::{cmp, str};
 const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
-const MAX_RETRANSMITTION: u8 = 3;
+const MAX_TRANSMITTION: u8 = 5;
 const RETRANSMITTION_TIMEOUT: u64 = 3;
 const MSS: usize = 1460;
 
@@ -74,11 +74,13 @@ impl TCP {
             // dbg!("timer check start");
             for (_, socket) in table.iter_mut() {
                 while let Some(mut item) = socket.retransmission_queue.pop_front() {
+                    // 再送キューからackされたセグメントを除去する
+                    // established state以外の時に送信されたセグメントを除去するために必要
                     if socket.send_param.unacked_seq > item.packet.get_seq() {
                         // ackされてる
                         dbg!("successfully acked", item.packet.get_seq());
                         socket.send_param.window += item.packet.payload().len() as u16;
-                        self.publish_event(socket.get_sock_id(), TCPEventKind::Acked); // イベントを受けた側がテーブルロックを取れるのは1ループ終わった後
+                        self.publish_event(socket.get_sock_id(), TCPEventKind::Acked);
                         if item.packet.get_flag() & tcpflags::FIN > 0
                             && socket.status == TcpStatus::LastAck
                         {
@@ -96,11 +98,10 @@ impl TCP {
                         // 取り出したエントリがタイムアウトしてないなら，キューの以降のエントリもタイムアウトしてない
                         // 先頭に戻す
                         socket.retransmission_queue.push_front(item);
-
-                        break; //
+                        break;
                     }
                     // ackされてなければ再送
-                    if item.transmission_count < MAX_RETRANSMITTION {
+                    if item.transmission_count < MAX_TRANSMITTION {
                         // 再送
                         dbg!(
                             "retransmit",
@@ -116,7 +117,7 @@ impl TCP {
                         socket.retransmission_queue.push_back(item);
                         break;
                     } else {
-                        dbg!("reached MAX_RETRANSMITTION");
+                        dbg!("reached MAX_TRANSMITTION");
                     }
                 }
             }
@@ -507,6 +508,22 @@ impl TCP {
         Ok(())
     }
 
+    fn delete_acked_segment_from_retransmission_queue(&self, socket: &mut Socket) {
+        dbg!("ack accept", socket.send_param.unacked_seq);
+        while let Some(item) = socket.retransmission_queue.pop_front() {
+            if socket.send_param.unacked_seq > item.packet.get_seq() {
+                // ackされてるので除去
+                dbg!("successfully acked", item.packet.get_seq());
+                socket.send_param.window += item.packet.payload().len() as u16;
+                self.publish_event(socket.get_sock_id(), TCPEventKind::Acked);
+            } else {
+                // ackされてない．戻す．
+                socket.retransmission_queue.push_front(item);
+                break;
+            }
+        }
+    }
+
     fn established_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("established handler");
         // !RSTならCLOSE
@@ -523,28 +540,9 @@ impl TCP {
             && packet.get_ack() <= socket.send_param.next
         {
             socket.send_param.unacked_seq = packet.get_ack();
-            dbg!("ack accept", socket.send_param.unacked_seq);
-            while let Some(item) = socket.retransmission_queue.pop_front() {
-                if socket.send_param.unacked_seq > item.packet.get_seq() {
-                    // ackされてる
-                    dbg!("successfully acked", item.packet.get_seq());
-                    socket.send_param.window += item.packet.payload().len() as u16;
-                    self.publish_event(socket.get_sock_id(), TCPEventKind::Acked); // イベントを受けた側がテーブルロックを取れるのは1ループ終わった後
-                    if item.packet.get_flag() & tcpflags::FIN > 0
-                        && socket.status == TcpStatus::LastAck
-                    {
-                        self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionClosed);
-                    }
-                } else {
-                    // ackされてない．戻す．
-                    socket.retransmission_queue.push_front(item);
-                    break;
-                }
-            }
-        // このタイミングで
-        // !ウィンドウ操作
+            self.delete_acked_segment_from_retransmission_queue(socket);
         } else if socket.send_param.next < packet.get_ack() {
-            // おかしなackは破棄
+            // 未送信セグメントに対するackは破棄
             dbg!(
                 "invalid ack num",
                 packet.get_ack(),
@@ -554,7 +552,6 @@ impl TCP {
             return Ok(());
         }
         // 重複のACKは無視
-        // socket.send_param.send
         if packet.get_flag() & tcpflags::ACK == 0 {
             // ACKが立っていないパケットは破棄
             return Ok(());
