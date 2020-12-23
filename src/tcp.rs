@@ -397,108 +397,15 @@ impl TCP {
             if let Err(error) = match socket.status {
                 TcpStatus::Listen => self.listen_handler(table, sock_id, &packet, remote_addr),
                 TcpStatus::SynRcvd => self.synrcvd_handler(table, sock_id, &packet),
-                TcpStatus::SynSent => {
-                    // self.synsent_handler(&packet, table, socket)?;
-                    dbg!("synsend handler");
-                    if packet.get_flag() & tcpflags::ACK > 0 {
-                        if socket.send_param.unacked_seq <= packet.get_ack()
-                            && packet.get_ack() <= socket.send_param.next
-                        {
-                            if packet.get_flag() & tcpflags::RST > 0 {
-                                drop(socket);
-                                table.remove(&sock_id);
-                                // return Ok(());
-                                continue;
-                            }
-                            if packet.get_flag() & tcpflags::SYN > 0 {
-                                socket.recv_param.next = packet.get_seq() + 1;
-                                socket.recv_param.initial_seq = packet.get_seq();
-                                socket.send_param.unacked_seq = packet.get_ack();
-                                socket.send_param.window = packet.get_window_size();
-                                if socket.send_param.unacked_seq > socket.send_param.initial_seq {
-                                    socket
-                                        .send_tcp_packet(
-                                            socket.send_param.next,
-                                            socket.recv_param.next,
-                                            tcpflags::ACK,
-                                            &[],
-                                        )
-                                        .unwrap(); // TODO
-                                    socket.status = TcpStatus::Established;
-                                    if let None = socket.retransmission_queue.pop_front() {
-                                        // 最初のSYNが入っている
-                                        dbg!("initial SYN not fount!");
-                                    }
-                                    dbg!("status: SynSend → Established");
-                                    self.publish_event(sock_id, TCPEventKind::ConnectionCompleted);
-                                } else {
-                                    // to SYNRCVD
-                                }
-                            }
-                        } else {
-                            dbg!("invalid ack number");
-                        }
-                    }
-                    Ok(())
-                }
+                TcpStatus::SynSent => self.synsent_handler(socket, &packet),
                 TcpStatus::Established => self.established_handler(socket, &packet),
-                TcpStatus::CloseWait | TcpStatus::LastAck => {
-                    dbg!("CloseWait | LastAck handler");
-                    socket.send_param.unacked_seq = packet.get_ack();
-                    Ok(())
-                }
-                TcpStatus::FinWait1 => {
-                    dbg!("FinWait1 handler");
-                    // TODO: まだデータは受け取らないといけない
-
-                    if packet.get_flag() & tcpflags::ACK == 0 {
-                        // ACKが立っていないパケットは破棄
-                        return Ok(());
-                    }
-                    socket.send_param.unacked_seq = packet.get_ack();
-                    socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
-                    if socket.send_param.next == socket.send_param.unacked_seq {
-                        socket.status = TcpStatus::FinWait2;
-                        if packet.get_flag() & tcpflags::FIN > 0 {
-                            socket.recv_param.next += 1;
-                            socket.send_tcp_packet(
-                                socket.send_param.next,
-                                socket.recv_param.next,
-                                tcpflags::ACK,
-                                &[],
-                            )?;
-                            self.publish_event(sock_id, TCPEventKind::ConnectionClosed);
-                        }
-                    }
-                    Ok(())
-                }
-                TcpStatus::FinWait2 => {
-                    dbg!("FinWait2 handler");
-
-                    // TODO: まだデータは受け取らないといけない
-                    if packet.get_flag() & tcpflags::ACK == 0 {
-                        // ACKが立っていないパケットは破棄
-                        return Ok(());
-                    }
-                    socket.send_param.unacked_seq = packet.get_ack();
-                    socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
-                    if packet.get_flag() & tcpflags::FIN > 0 {
-                        socket.recv_param.next += 1;
-                        socket.send_tcp_packet(
-                            socket.send_param.next,
-                            socket.recv_param.next,
-                            tcpflags::ACK,
-                            &[],
-                        )?;
-                        self.publish_event(sock_id, TCPEventKind::ConnectionClosed);
-                    }
-                    Ok(())
-                }
+                TcpStatus::CloseWait | TcpStatus::LastAck => self.close_handler(socket, &packet),
+                TcpStatus::FinWait1 => self.finwait1_handler(socket, &packet),
+                TcpStatus::FinWait2 => self.finwait2_handler(socket, &packet),
                 _ => unimplemented!(),
             } {
                 dbg!(error);
             }
-            // drop(table);
         }
     }
 
@@ -579,6 +486,44 @@ impl TCP {
             }
         } else {
             dbg!("unexpected flag");
+        }
+        Ok(())
+    }
+
+    fn synsent_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
+        dbg!("synsend handler");
+        if packet.get_flag() & tcpflags::ACK > 0 {
+            if socket.send_param.unacked_seq <= packet.get_ack()
+                && packet.get_ack() <= socket.send_param.next
+            {
+                if packet.get_flag() & tcpflags::SYN > 0 {
+                    socket.recv_param.next = packet.get_seq() + 1;
+                    socket.recv_param.initial_seq = packet.get_seq();
+                    socket.send_param.unacked_seq = packet.get_ack();
+                    socket.send_param.window = packet.get_window_size();
+                    if socket.send_param.unacked_seq > socket.send_param.initial_seq {
+                        socket
+                            .send_tcp_packet(
+                                socket.send_param.next,
+                                socket.recv_param.next,
+                                tcpflags::ACK,
+                                &[],
+                            )
+                            .unwrap(); // TODO
+                        socket.status = TcpStatus::Established;
+                        if let None = socket.retransmission_queue.pop_front() {
+                            // 最初のSYNが入っている
+                            dbg!("initial SYN not fount!");
+                        }
+                        dbg!("status: SynSend → Established");
+                        self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionCompleted);
+                    } else {
+                        // to SYNRCVD
+                    }
+                }
+            } else {
+                dbg!("invalid ack number");
+            }
         }
         Ok(())
     }
@@ -685,6 +630,61 @@ impl TCP {
             // ソケットの送信ウィンドウにデータが残ってしまうので？ 明示的にFINさせよう
             socket.status = TcpStatus::CloseWait;
             self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
+        }
+        Ok(())
+    }
+
+    fn close_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
+        dbg!("CloseWait | LastAck handler");
+        socket.send_param.unacked_seq = packet.get_ack();
+        Ok(())
+    }
+
+    fn finwait1_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
+        dbg!("FinWait1 handler");
+        // TODO: まだデータは受け取らないといけない
+
+        if packet.get_flag() & tcpflags::ACK == 0 {
+            // ACKが立っていないパケットは破棄
+            return Ok(());
+        }
+        socket.send_param.unacked_seq = packet.get_ack();
+        socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
+        if socket.send_param.next == socket.send_param.unacked_seq {
+            socket.status = TcpStatus::FinWait2;
+            if packet.get_flag() & tcpflags::FIN > 0 {
+                socket.recv_param.next += 1;
+                socket.send_tcp_packet(
+                    socket.send_param.next,
+                    socket.recv_param.next,
+                    tcpflags::ACK,
+                    &[],
+                )?;
+                self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionClosed);
+            }
+        }
+        Ok(())
+    }
+
+    fn finwait2_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
+        dbg!("FinWait2 handler");
+
+        // TODO: まだデータは受け取らないといけない
+        if packet.get_flag() & tcpflags::ACK == 0 {
+            // ACKが立っていないパケットは破棄
+            return Ok(());
+        }
+        socket.send_param.unacked_seq = packet.get_ack();
+        socket.recv_param.next = packet.get_seq() + packet.payload().len() as u32;
+        if packet.get_flag() & tcpflags::FIN > 0 {
+            socket.recv_param.next += 1;
+            socket.send_tcp_packet(
+                socket.send_param.next,
+                socket.recv_param.next,
+                tcpflags::ACK,
+                &[],
+            )?;
+            self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionClosed);
         }
         Ok(())
     }
