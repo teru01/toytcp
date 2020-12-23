@@ -10,6 +10,7 @@ use std::time::SystemTime;
 
 const SOCKET_BUFFER_SIZE: usize = 4380;
 
+/// (local_addr, remote_addr, local_port, remote_port)のタプルでソケットを識別する．
 #[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
 pub struct SockID(pub Ipv4Addr, pub Ipv4Addr, pub u16, pub u16);
 

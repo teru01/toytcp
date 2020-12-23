@@ -1,31 +1,25 @@
 use crate::packet::{tcpflags, TCPPacket};
 use crate::socket::{SockID, Socket, TcpStatus};
 use anyhow::{Context, Result};
-use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::tcp::TcpPacket;
-use pnet::packet::Packet;
+use pnet::packet::{ip::IpNextHeaderProtocols, tcp::TcpPacket, Packet};
 use pnet::transport::{self, TransportChannelType};
 use rand::{rngs::ThreadRng, Rng};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard};
-use std::thread;
 use std::time::{Duration, SystemTime};
-use std::{cmp, str};
+use std::{cmp, ops::Range, str, thread};
+
 const UNDETERMINED_IP_ADDR: std::net::Ipv4Addr = Ipv4Addr::new(0, 0, 0, 0);
 const UNDETERMINED_PORT: u16 = 0;
 const MAX_TRANSMITTION: u8 = 5;
 const RETRANSMITTION_TIMEOUT: u64 = 3;
 const MSS: usize = 1460;
-
-pub struct TCP {
-    sockets: RwLock<HashMap<SockID, Socket>>,
-    event_condvar: (Mutex<Option<TCPEvent>>, Condvar),
-}
+const PORT_RANGE: Range<u16> = 40000..60000;
 
 #[derive(Debug, Clone, PartialEq)]
 struct TCPEvent {
-    sock_id: SockID,
+    sock_id: SockID, //イベント発生元のソケットID
     kind: TCPEventKind,
 }
 
@@ -43,6 +37,11 @@ impl TCPEvent {
     }
 }
 
+pub struct TCP {
+    sockets: RwLock<HashMap<SockID, Socket>>,
+    event_condvar: (Mutex<Option<TCPEvent>>, Condvar),
+}
+
 impl TCP {
     pub fn new() -> Arc<Self> {
         let sockets = RwLock::new(HashMap::new());
@@ -52,23 +51,22 @@ impl TCP {
         });
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
-            // 受信スレッドではtableとsenderに触りたい
+            // パケットの受信用スレッド
             cloned_tcp.receive_handler().unwrap();
         });
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
+            // 再送を管理するためのタイマースレッド
             cloned_tcp.timer();
         });
         tcp
     }
 
-    // タイマースレッド用
-    // 全てのソケットの再送キューを見て，タイムアウトしているパケットを再送する
+    /// タイマースレッド用の関数
+    /// 全てのソケットの再送キューを見て，タイムアウトしているパケットを再送する
     fn timer(&self) {
         loop {
-            // dbg!("timer loop");
             let mut table = self.sockets.write().unwrap();
-            // dbg!("timer check start");
             for (_, socket) in table.iter_mut() {
                 while let Some(mut item) = socket.retransmission_queue.pop_front() {
                     // 再送キューからackされたセグメントを除去する
@@ -100,10 +98,7 @@ impl TCP {
                     // ackされてなければ再送
                     if item.transmission_count < MAX_TRANSMITTION {
                         // 再送
-                        dbg!(
-                            "retransmit",
-                            item.packet.get_seq() - socket.send_param.initial_seq
-                        );
+                        dbg!("retransmit");
                         socket
                             .sender
                             .send_to(item.packet.clone(), IpAddr::V4(socket.remote_addr))
@@ -124,14 +119,13 @@ impl TCP {
         }
     }
 
-    /// リスニングソケットを生成してIDを返す
+    /// リスニングソケットを生成してソケットIDを返す
     pub fn listen(&self, local_addr: Ipv4Addr, local_port: u16) -> Result<SockID> {
-        // self.local_addr = local_addr;
         let socket = Socket::new(
             local_addr,
-            UNDETERMINED_IP_ADDR,
+            UNDETERMINED_IP_ADDR, // まだ接続先IPアドレスは未定
             local_port,
-            UNDETERMINED_PORT,
+            UNDETERMINED_PORT, // まだ接続先ポート番号は未定
             TcpStatus::Listen,
         )?;
         let mut lock = self.sockets.write().unwrap();
@@ -140,9 +134,7 @@ impl TCP {
         Ok(sock_id)
     }
 
-    /// 接続済みソケットが生成されるまで待機し，されたらそのIDを返す
-    /// コネクション確立キューにエントリが入るまでブロック
-    /// エントリはrecvスレッドがいれる
+    /// 接続済みソケットが生成されるまで待機し，生成されたらそのIDを返す
     pub fn accept(&self, sock_id: SockID) -> Result<SockID> {
         self.wait_event(sock_id, TCPEventKind::ConnectionCompleted);
 
@@ -155,9 +147,10 @@ impl TCP {
             .context("no connected socket")?)
     }
 
+    /// 未使用のポート番号を探して返す
     fn select_unused_port(&self, rng: &mut ThreadRng) -> Result<u16> {
-        for _ in 0..20000 {
-            let local_port = rng.gen_range(40000..60000);
+        for _ in 0..(PORT_RANGE.end - PORT_RANGE.start) {
+            let local_port = rng.gen_range(PORT_RANGE);
             let table = self.sockets.read().unwrap();
             if table.keys().all(|k| local_port != k.2) {
                 return Ok(local_port);
@@ -176,8 +169,7 @@ impl TCP {
             port,
             TcpStatus::SynSent,
         )?;
-        let iss = rng.gen_range(1..1 << 31);
-        socket.send_param.initial_seq = iss; // ランダムにしないと，2回目以降SYNが返ってこなくなる（ACKだけ）
+        socket.send_param.initial_seq = rng.gen_range(1..1 << 31);
         socket.send_tcp_packet(socket.send_param.initial_seq, 0, tcpflags::SYN, &[])?;
         socket.send_param.unacked_seq = socket.send_param.initial_seq;
         socket.send_param.next = socket.send_param.initial_seq + 1;
@@ -190,8 +182,8 @@ impl TCP {
         Ok(sock_id)
     }
 
-    /// セグメントが到着次第すぐにreturnする
-    /// 到着イベント発生→ロック取得→読み出し
+    /// データをバッファに読み込んで，読み込んだサイズを返す．FINを読み込んだ場合は0を返す
+    /// パケットが届くまでブロックする
     pub fn receive(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
         let mut table = self.sockets.write().unwrap();
         let mut socket = table
@@ -213,26 +205,18 @@ impl TCP {
                 .get_mut(&sock_id)
                 .context(format!("no such socket: {:?}", sock_id))?;
             received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
-            //ロスで歯抜けになってる時，windowはrecv_handlerで変化させてない，0になる
         }
-        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize; // ロスの後の歯抜けに埋まった時，一気に2セグ分コピー
+        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
         let copy_size = cmp::min(buffer.len(), received_size);
         buffer[..copy_size].copy_from_slice(&socket.recv_buffer[..copy_size]);
         socket.recv_buffer.copy_within(copy_size.., 0);
         socket.recv_param.window += copy_size as u16;
-        // socket.recv_param.tail -= copy_size as u32;
-        dbg!(socket.recv_param.window, copy_size);
         Ok(copy_size)
     }
 
-    /// バッファが空いてないとブロックする．受信側はバッファいっぱいにならないようにreadしておかないといけない
-    ///
+    /// バッファのデータを送信する．必要であれば複数のパケットに分割して送信する．
+    /// 全て送信したら（まだackされてなくても）リターンする．
     pub fn send(&self, sock_id: SockID, buffer: &[u8]) -> Result<()> {
-        // 送信バッファに書き込んだらreturn(Linux方式) or 送信できたらreturn
-        // 送信中に受信ウィンドウが変化するが，それには対応できない（MSS < windowなら一定なので問題ない）
-        // 非同期でACKを受けている（タイマースレッドで）なので，送信ウィンドウがとても大きい（スロースタートになってない）
-        // 送信バッファなしでやる
-        // 送信ウィンドウだけしかin flightにできない
         let mut cursor = 0;
         while cursor < buffer.len() {
             let mut table = self.sockets.write().unwrap();
@@ -257,7 +241,6 @@ impl TCP {
                     MSS,
                     cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
                 );
-                dbg!("next while", send_size, socket.send_param.window);
             }
             socket.send_tcp_packet(
                 socket.send_param.next,
@@ -268,14 +251,15 @@ impl TCP {
             cursor += send_size;
             socket.send_param.next += send_size as u32;
             socket.send_param.window -= send_size as u16;
-            // 送信中にACKが入ってこれるようにしている．
-            // そうしないとsend_bufferが0になるまで必ず送り続けてブロックする
+            // 少しの間ロックを外して待機し，受信スレッドがACKを受信できるようにしている．
+            // send_windowが0になるまで送り続け，送信がブロックされる確率を下げるため
             drop(table);
             thread::sleep(Duration::from_millis(1));
         }
         Ok(())
     }
 
+    /// 接続を閉じる．
     pub fn close(&self, sock_id: SockID) -> Result<()> {
         let mut table = self.sockets.write().unwrap();
         let mut socket = table
@@ -315,7 +299,7 @@ impl TCP {
         Ok(())
     }
 
-    /// 指定したsock_idでイベントを待機
+    /// 指定したソケットIDと種別のイベントを待機
     fn wait_event(&self, sock_id: SockID, kind: TCPEventKind) {
         let (lock, cvar) = &self.event_condvar;
         let mut event = lock.lock().unwrap();
@@ -325,17 +309,19 @@ impl TCP {
                     break;
                 }
             }
+            // cvarがnotifyされるまでeventのロックを外して待機
             event = cvar.wait(event).unwrap();
         }
         dbg!(&event);
         *event = None;
     }
 
+    /// 受信スレッド用の関数．
     fn receive_handler(&self) -> Result<()> {
         dbg!("begin recv thread");
         let (_, mut receiver) = transport::transport_channel(
             65535,
-            TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp), // IPパケットレベルで取得
+            TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp), // IPアドレスが必要なので，IPパケットレベルで取得．
         )
         .unwrap();
         let mut packet_iter = transport::ipv4_packet_iter(&mut receiver);
@@ -345,12 +331,14 @@ impl TCP {
                 Err(_) => continue,
             };
             let local_addr = packet.get_destination();
+            // pnetのTcpPacketを生成
             let tcp_packet = match TcpPacket::new(packet.payload()) {
                 Some(p) => p,
                 None => {
                     continue;
                 }
             };
+            // pnetのTcpPacketからtcp::TCPPacketに変換する
             let packet = TCPPacket::from(tcp_packet);
             let remote_addr = match remote_addr {
                 IpAddr::V4(addr) => addr,
@@ -358,7 +346,6 @@ impl TCP {
                     continue;
                 }
             };
-            dbg!("incoming from", &remote_addr, packet.get_src());
             let mut table = self.sockets.write().unwrap();
             let socket = match table.get_mut(&SockID(
                 local_addr,
@@ -374,7 +361,7 @@ impl TCP {
                     UNDETERMINED_PORT,
                 )) {
                     Some(socket) => socket, // リスニングソケット
-                    None => continue,       // 該当しないものは無視
+                    None => continue,       // どのソケットにも該当しないものは無視
                 },
             };
             if !packet.is_correct_checksum(local_addr, remote_addr) {
@@ -390,13 +377,17 @@ impl TCP {
                 TcpStatus::CloseWait | TcpStatus::LastAck => self.close_handler(socket, &packet),
                 TcpStatus::FinWait1 => self.finwait1_handler(socket, &packet),
                 TcpStatus::FinWait2 => self.finwait2_handler(socket, &packet),
-                _ => unimplemented!(),
+                _ => {
+                    dbg!("not implemented state");
+                    Ok(())
+                }
             } {
                 dbg!(error);
             }
         }
     }
 
+    /// LISTEN状態のソケットに到着したパケットの処理
     fn listen_handler(
         &self,
         mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
@@ -405,10 +396,14 @@ impl TCP {
         remote_addr: Ipv4Addr,
     ) -> Result<()> {
         dbg!("listen handler");
-        // check RST
-        // check ACK
+        if packet.get_flag() & tcpflags::ACK > 0 {
+            // 本来ならRSTをsendする
+            return Ok(());
+        }
         let listening_socket = table.get_mut(&listening_socket_id).unwrap();
         if packet.get_flag() & tcpflags::SYN > 0 {
+            // passive openの処理
+            // 後に接続済みソケットとなるソケットを新たに生成する
             let mut connection_socket = Socket::new(
                 listening_socket.local_addr,
                 remote_addr,
@@ -429,12 +424,13 @@ impl TCP {
             connection_socket.send_param.next = connection_socket.send_param.initial_seq + 1;
             connection_socket.send_param.unacked_seq = connection_socket.send_param.initial_seq;
             connection_socket.listening_socket = Some(listening_socket.get_sock_id());
-            dbg!("status: listen → synrcvd");
+            dbg!("status: listen -> ", &connection_socket.status);
             table.insert(connection_socket.get_sock_id(), connection_socket);
         }
         Ok(())
     }
 
+    /// SYNRCVD状態のソケットに到着したパケットの処理
     fn synrcvd_handler(
         &self,
         mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
@@ -444,12 +440,12 @@ impl TCP {
         dbg!("synrcvd handler");
         let socket = table.get_mut(&sock_id).unwrap();
 
-        // seqを見て受け入れ可能テスト
+        // SYNを受信した際は接続をリセット
+        if packet.get_flag() & tcpflags::SYN > 0 {
+            table.remove(&sock_id);
+            return Ok(());
+        }
 
-        // check RST
-        // check SYN
-
-        // ACK
         if packet.get_flag() & tcpflags::ACK > 0 {
             if socket.send_param.unacked_seq <= packet.get_ack()
                 && packet.get_ack() <= socket.send_param.next
@@ -457,23 +453,22 @@ impl TCP {
                 socket.recv_param.next = packet.get_seq();
                 socket.send_param.unacked_seq = packet.get_ack();
                 socket.status = TcpStatus::Established;
+                dbg!("status: synrcvd ->", &socket.status);
                 if let Some(id) = socket.listening_socket {
                     let ls = table.get_mut(&id).unwrap();
                     ls.connected_connection_queue.push_back(sock_id);
                     self.publish_event(ls.get_sock_id(), TCPEventKind::ConnectionCompleted);
                 }
-                dbg!("status: synrcvd → established");
             } else {
-                dbg!("invalid params");
+                dbg!("invalid ack number");
             }
-        } else {
-            dbg!("unexpected flag");
         }
         Ok(())
     }
 
+    /// SYNSENT状態のソケットに到着したパケットの処理
     fn synsent_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
-        dbg!("synsend handler");
+        dbg!("synsent handler");
         if packet.get_flag() & tcpflags::ACK > 0 {
             if socket.send_param.unacked_seq <= packet.get_ack()
                 && packet.get_ack() <= socket.send_param.next
@@ -484,17 +479,24 @@ impl TCP {
                     socket.send_param.unacked_seq = packet.get_ack();
                     socket.send_param.window = packet.get_window_size();
                     if socket.send_param.unacked_seq > socket.send_param.initial_seq {
+                        socket.status = TcpStatus::Established;
                         socket.send_tcp_packet(
                             socket.send_param.next,
                             socket.recv_param.next,
                             tcpflags::ACK,
                             &[],
                         )?;
-                        socket.status = TcpStatus::Established;
-                        dbg!("status: SynSend → Established");
+                        dbg!("status: synsent ->", &socket.status);
                         self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionCompleted);
                     } else {
-                        // to SYNRCVD
+                        socket.status = TcpStatus::SynRcvd;
+                        socket.send_tcp_packet(
+                            socket.send_param.next,
+                            socket.recv_param.next,
+                            tcpflags::ACK,
+                            &[],
+                        )?;
+                        dbg!("status: synsent ->", &socket.status);
                     }
                 }
             } else {
