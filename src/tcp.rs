@@ -338,8 +338,10 @@ impl TCP {
         .unwrap();
         let mut packet_iter = transport::ipv4_packet_iter(&mut receiver);
         loop {
-            // TODO: 最初にCtrl-C検出して受信スレッド終了処理したい
-            let (packet, remote_addr) = packet_iter.next().unwrap(); // TODO handling
+            let (packet, remote_addr) = match packet_iter.next() {
+                Ok((p, r)) => (p, r),
+                Err(_) => continue,
+            };
             dbg!("recvd");
             let local_addr = packet.get_destination();
             let tcp_packet = match TcpPacket::new(packet.payload()) {
@@ -381,11 +383,7 @@ impl TCP {
                         socket
                     } // リスニングソケット
                     None => {
-                        for k in table.keys() {
-                            dbg!(k);
-                        }
-                        dbg!(local_addr, remote_addr, packet.get_dest(), packet.get_src());
-                        dbg!("SOCKET NOT FOUND");
+                        // 該当しないものは無視
                         continue;
                     }
                 }, // return RST
@@ -393,7 +391,6 @@ impl TCP {
             };
             // TODO checksum, ack検証
             let sock_id = socket.get_sock_id();
-            // ホントはちゃんとエラー処理
             if let Err(error) = match socket.status {
                 TcpStatus::Listen => self.listen_handler(table, sock_id, &packet, remote_addr),
                 TcpStatus::SynRcvd => self.synrcvd_handler(table, sock_id, &packet),
