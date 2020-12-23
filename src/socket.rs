@@ -2,21 +2,14 @@ use crate::packet::{tcpflags, TCPPacket};
 use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::Packet;
-use pnet::transport::{
-    self, TransportChannelType, TransportProtocol, TransportReceiver, TransportSender,
-};
+use pnet::transport::{self, TransportChannelType, TransportProtocol, TransportSender};
 use pnet::util;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::{self, Display};
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{
-    mpsc::{self, Receiver, Sender, SyncSender},
-    Arc, Condvar, Mutex, RwLock,
-};
 use std::time::SystemTime;
 
 const TCP_DATA_OFFSET: u8 = 5;
-const CHANNEL_BOUND: usize = 1 << 16;
 const SOCKET_BUFFER_SIZE: usize = 4380;
 
 // enum Socket {
@@ -118,15 +111,15 @@ impl Socket {
         remote_port: u16,
         status: TcpStatus,
     ) -> Result<Self> {
-        let (mut sender, _) = transport::transport_channel(
+        let (sender, _) = transport::transport_channel(
             65535,
             TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocols::Tcp)),
         )?;
         Ok(Self {
             local_addr,
-            remote_addr: remote_addr,
+            remote_addr,
             local_port,
-            remote_port: remote_port,
+            remote_port,
             send_param: SendParam {
                 unacked_seq: 0,
                 initial_seq: 0,
@@ -181,7 +174,7 @@ impl Socket {
             .context(format!("failed to send: \n{:?}", tcp_packet))?;
 
         dbg!("send", &tcp_packet);
-        if payload.len() > 0 || tcp_packet.get_flag() != tcpflags::ACK {
+        if !payload.is_empty() || tcp_packet.get_flag() != tcpflags::ACK {
             self.retransmission_queue
                 .push_back(RetransmissionQueueEntry::new(tcp_packet));
         }

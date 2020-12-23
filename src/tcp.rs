@@ -4,13 +4,10 @@ use anyhow::{Context, Result};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::Packet;
-use pnet::transport::{
-    self, TransportChannelType, TransportProtocol, TransportReceiver, TransportSender,
-};
+use pnet::transport::{self, TransportChannelType};
 use rand::{rngs::ThreadRng, Rng};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -23,7 +20,7 @@ const MSS: usize = 1460;
 
 pub struct TCP {
     sockets: RwLock<HashMap<SockID, Socket>>,
-    event_cond: (Mutex<Option<TCPEvent>>, Condvar),
+    event_condvar: (Mutex<Option<TCPEvent>>, Condvar),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,12 +48,12 @@ impl TCP {
         let sockets = RwLock::new(HashMap::new());
         let tcp = Arc::new(Self {
             sockets,
-            event_cond: (Mutex::new(None), Condvar::new()),
+            event_condvar: (Mutex::new(None), Condvar::new()),
         });
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
             // 受信スレッドではtableとsenderに触りたい
-            cloned_tcp.receive_handler();
+            cloned_tcp.receive_handler().unwrap();
         });
         let cloned_tcp = tcp.clone();
         std::thread::spawn(move || {
@@ -107,10 +104,10 @@ impl TCP {
                             "retransmit",
                             item.packet.get_seq() - socket.send_param.initial_seq
                         );
-                        let sent_size = socket
+                        socket
                             .sender
                             .send_to(item.packet.clone(), IpAddr::V4(socket.remote_addr))
-                            .context(format!("failed to retransmit"))
+                            .context("failed to retransmit")
                             .unwrap();
                         item.transmission_count += 1;
                         item.latest_transmission_time = SystemTime::now();
@@ -320,7 +317,7 @@ impl TCP {
 
     /// 指定したsock_idでイベントを待機
     fn wait_event(&self, sock_id: SockID, kind: TCPEventKind) {
-        let (lock, cvar) = &self.event_cond;
+        let (lock, cvar) = &self.event_condvar;
         let mut event = lock.lock().unwrap();
         loop {
             if let Some(ref e) = *event {
@@ -457,10 +454,6 @@ impl TCP {
             if socket.send_param.unacked_seq <= packet.get_ack()
                 && packet.get_ack() <= socket.send_param.next
             {
-                // SYN|ACKが入っている
-                if let None = socket.retransmission_queue.pop_front() {
-                    dbg!("initial SYN|ACK NOT FOUND");
-                }
                 socket.recv_param.next = packet.get_seq();
                 socket.send_param.unacked_seq = packet.get_ack();
                 socket.status = TcpStatus::Established;
@@ -498,10 +491,6 @@ impl TCP {
                             &[],
                         )?;
                         socket.status = TcpStatus::Established;
-                        if let None = socket.retransmission_queue.pop_front() {
-                            // 最初のSYNが入っている
-                            dbg!("initial SYN not fount!");
-                        }
                         dbg!("status: SynSend → Established");
                         self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionCompleted);
                     } else {
@@ -582,7 +571,7 @@ impl TCP {
         }
         // 重複のACKは無視
 
-        if packet.payload().len() > 0 {
+        if !packet.payload().is_empty() {
             // バッファにおける読み込みのヘッド位置．
             dbg!(
                 // offset,
@@ -672,7 +661,7 @@ impl TCP {
     }
 
     fn publish_event(&self, sock_id: SockID, kind: TCPEventKind) {
-        let (lock, cvar) = &self.event_cond;
+        let (lock, cvar) = &self.event_condvar;
         let mut e = lock.lock().unwrap();
         *e = Some(TCPEvent::new(sock_id, kind));
         cvar.notify_all();

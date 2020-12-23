@@ -1,14 +1,11 @@
-use anyhow::{Context, Result};
-use std::fs::{self, File};
-use std::sync::Arc;
+use anyhow::Result;
+use std::fs::{self};
 use std::{
     env,
-    io::{self, prelude::*, BufReader},
+    io::{self},
     net::Ipv4Addr,
     str,
 };
-use toytcp::packet::tcpflags;
-use toytcp::socket::{SockID, Socket};
 use toytcp::tcp::TCP;
 
 fn main() -> Result<()> {
@@ -33,7 +30,6 @@ fn fileserver() -> Result<()> {
     let tcp = TCP::new();
     let listening_socket = tcp.listen(Ipv4Addr::new(10, 0, 0, 1), 40000)?;
     dbg!("listening..");
-    let cloned_tcp = tcp.clone();
     loop {
         let connected_socket = tcp.accept(listening_socket)?;
         dbg!("accepted!", connected_socket.1, connected_socket.3);
@@ -74,7 +70,6 @@ fn serve() -> Result<()> {
     let tcp = TCP::new();
     let listening_socket = tcp.listen(Ipv4Addr::new(10, 0, 0, 1), 40000)?;
     dbg!("listening..");
-    let cloned_tcp = tcp.clone();
     loop {
         let connected_socket = tcp.accept(listening_socket)?;
         dbg!("accepted!", connected_socket.1, connected_socket.3);
