@@ -439,21 +439,18 @@ impl TCP {
         dbg!("synrcvd handler");
         let socket = table.get_mut(&sock_id).unwrap();
 
-        if packet.get_flag() & tcpflags::ACK > 0 {
-            if socket.send_param.unacked_seq <= packet.get_ack()
-                && packet.get_ack() <= socket.send_param.next
-            {
-                socket.recv_param.next = packet.get_seq();
-                socket.send_param.unacked_seq = packet.get_ack();
-                socket.status = TcpStatus::Established;
-                dbg!("status: synrcvd ->", &socket.status);
-                if let Some(id) = socket.listening_socket {
-                    let ls = table.get_mut(&id).unwrap();
-                    ls.connected_connection_queue.push_back(sock_id);
-                    self.publish_event(ls.get_sock_id(), TCPEventKind::ConnectionCompleted);
-                }
-            } else {
-                dbg!("invalid ack number");
+        if packet.get_flag() & tcpflags::ACK > 0
+            && socket.send_param.unacked_seq <= packet.get_ack()
+            && packet.get_ack() <= socket.send_param.next
+        {
+            socket.recv_param.next = packet.get_seq();
+            socket.send_param.unacked_seq = packet.get_ack();
+            socket.status = TcpStatus::Established;
+            dbg!("status: synrcvd ->", &socket.status);
+            if let Some(id) = socket.listening_socket {
+                let ls = table.get_mut(&id).unwrap();
+                ls.connected_connection_queue.push_back(sock_id);
+                self.publish_event(ls.get_sock_id(), TCPEventKind::ConnectionCompleted);
             }
         }
         Ok(())
@@ -462,38 +459,34 @@ impl TCP {
     /// SYNSENT状態のソケットに到着したパケットの処理
     fn synsent_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
         dbg!("synsent handler");
-        if packet.get_flag() & tcpflags::ACK > 0 {
-            if socket.send_param.unacked_seq <= packet.get_ack()
-                && packet.get_ack() <= socket.send_param.next
-            {
-                if packet.get_flag() & tcpflags::SYN > 0 {
-                    socket.recv_param.next = packet.get_seq() + 1;
-                    socket.recv_param.initial_seq = packet.get_seq();
-                    socket.send_param.unacked_seq = packet.get_ack();
-                    socket.send_param.window = packet.get_window_size();
-                    if socket.send_param.unacked_seq > socket.send_param.initial_seq {
-                        socket.status = TcpStatus::Established;
-                        socket.send_tcp_packet(
-                            socket.send_param.next,
-                            socket.recv_param.next,
-                            tcpflags::ACK,
-                            &[],
-                        )?;
-                        dbg!("status: synsent ->", &socket.status);
-                        self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionCompleted);
-                    } else {
-                        socket.status = TcpStatus::SynRcvd;
-                        socket.send_tcp_packet(
-                            socket.send_param.next,
-                            socket.recv_param.next,
-                            tcpflags::ACK,
-                            &[],
-                        )?;
-                        dbg!("status: synsent ->", &socket.status);
-                    }
-                }
+        if packet.get_flag() & tcpflags::ACK > 0
+            && socket.send_param.unacked_seq <= packet.get_ack()
+            && packet.get_ack() <= socket.send_param.next
+            && packet.get_flag() & tcpflags::SYN > 0
+        {
+            socket.recv_param.next = packet.get_seq() + 1;
+            socket.recv_param.initial_seq = packet.get_seq();
+            socket.send_param.unacked_seq = packet.get_ack();
+            socket.send_param.window = packet.get_window_size();
+            if socket.send_param.unacked_seq > socket.send_param.initial_seq {
+                socket.status = TcpStatus::Established;
+                socket.send_tcp_packet(
+                    socket.send_param.next,
+                    socket.recv_param.next,
+                    tcpflags::ACK,
+                    &[],
+                )?;
+                dbg!("status: synsent ->", &socket.status);
+                self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionCompleted);
             } else {
-                dbg!("invalid ack number");
+                socket.status = TcpStatus::SynRcvd;
+                socket.send_tcp_packet(
+                    socket.send_param.next,
+                    socket.recv_param.next,
+                    tcpflags::ACK,
+                    &[],
+                )?;
+                dbg!("status: synsent ->", &socket.status);
             }
         }
         Ok(())
@@ -628,6 +621,7 @@ impl TCP {
         Ok(())
     }
 
+    /// 指定のソケットIDにイベントを発行する
     fn publish_event(&self, sock_id: SockID, kind: TCPEventKind) {
         let (lock, cvar) = &self.event_condvar;
         let mut e = lock.lock().unwrap();
@@ -636,6 +630,8 @@ impl TCP {
     }
 }
 
+/// 宛先IPアドレスに対する送信元インタフェースのIPアドレスを取得する
+/// Ubuntu18.04で動作を確認．OSによって挙動が変わるかも
 fn get_source_addr_to(addr: Ipv4Addr) -> Result<Ipv4Addr> {
     use std::process::Command;
     let output = Command::new("sh")
