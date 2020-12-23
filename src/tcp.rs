@@ -375,8 +375,7 @@ impl TCP {
                 TcpStatus::SynSent => self.synsent_handler(socket, &packet),
                 TcpStatus::Established => self.established_handler(socket, &packet),
                 TcpStatus::CloseWait | TcpStatus::LastAck => self.close_handler(socket, &packet),
-                TcpStatus::FinWait1 => self.finwait1_handler(socket, &packet),
-                TcpStatus::FinWait2 => self.finwait2_handler(socket, &packet),
+                TcpStatus::FinWait1 | TcpStatus::FinWait2 => self.finwait_handler(socket, &packet),
                 _ => {
                     dbg!("not implemented state");
                     Ok(())
@@ -549,54 +548,47 @@ impl TCP {
         Ok(())
     }
 
-    ///
+    /// パケットのペイロードを受信バッファにコピーする
     fn process_payload(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
-        if !packet.payload().is_empty() {
-            // バッファにおける読み込みのヘッド位置．
-            dbg!(
-                // offset,
-                socket.recv_buffer.len(),
-                socket.recv_param.window,
-                packet.get_seq(),
-                socket.recv_param.next
-            );
-            let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
-                + (packet.get_seq() - socket.recv_param.next) as usize;
-            let copy_size = cmp::min(packet.payload().len(), socket.recv_buffer.len() - offset);
-            socket.recv_buffer[offset..offset + copy_size]
-                .copy_from_slice(&packet.payload()[..copy_size]);
-            socket.recv_param.tail =
-                cmp::max(socket.recv_param.tail, packet.get_seq() + copy_size as u32); // ロス再送で穴埋めされる時のためにmaxをとる
+        // バッファにおける読み込みのヘッド位置．
+        let offset = socket.recv_buffer.len() - socket.recv_param.window as usize
+            + (packet.get_seq() - socket.recv_param.next) as usize;
+        let copy_size = cmp::min(packet.payload().len(), socket.recv_buffer.len() - offset);
+        socket.recv_buffer[offset..offset + copy_size]
+            .copy_from_slice(&packet.payload()[..copy_size]);
+        socket.recv_param.tail =
+            cmp::max(socket.recv_param.tail, packet.get_seq() + copy_size as u32); // ロス再送の際穴埋めされるためにmaxをとる
 
-            if packet.get_seq() == socket.recv_param.next {
-                // ロス・順序入れ替わり無しの場合のみrecv_param.nextを進められる
-                socket.recv_param.next = socket.recv_param.tail;
-                socket.recv_param.window -= (socket.recv_param.tail - packet.get_seq()) as u16;
-            }
-            if copy_size > 0 {
-                socket.send_tcp_packet(
-                    socket.send_param.next,
-                    socket.recv_param.next,
-                    tcpflags::ACK,
-                    &[],
-                )?;
-            } else {
-                // 受信バッファが溢れた時はセグメントを破棄
-                dbg!("recv buffer overflow");
-            }
-            self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
+        if packet.get_seq() == socket.recv_param.next {
+            // 順序入れ替わり無しの場合のみrecv_param.nextを進められる
+            socket.recv_param.next = socket.recv_param.tail;
+            socket.recv_param.window -= (socket.recv_param.tail - packet.get_seq()) as u16;
         }
+        if copy_size > 0 {
+            // 受信バッファにコピーが成功
+            socket.send_tcp_packet(
+                socket.send_param.next,
+                socket.recv_param.next,
+                tcpflags::ACK,
+                &[],
+            )?;
+        } else {
+            // 受信バッファが溢れた時はセグメントを破棄
+            dbg!("recv buffer overflow");
+        }
+        self.publish_event(socket.get_sock_id(), TCPEventKind::DataArrived);
         Ok(())
     }
 
     fn close_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
-        dbg!("CloseWait | LastAck handler");
+        dbg!("closewait | lastack handler");
         socket.send_param.unacked_seq = packet.get_ack();
         Ok(())
     }
 
-    fn finwait1_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
-        dbg!("FinWait1 handler");
+    /// FINWAIT1 or FINWAIT2状態のソケットに到着したパケットの処理
+    fn finwait_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
+        dbg!("finwait handler");
         if socket.send_param.unacked_seq < packet.get_ack()
             && packet.get_ack() <= socket.send_param.next
         {
@@ -614,42 +606,16 @@ impl TCP {
             self.process_payload(socket, &packet)?;
         }
 
-        if socket.send_param.next == socket.send_param.unacked_seq {
+        if socket.status == TcpStatus::FinWait1
+            && socket.send_param.next == socket.send_param.unacked_seq
+        {
+            // 送信したFINがackされていればFinWait2へ遷移
             socket.status = TcpStatus::FinWait2;
-            if packet.get_flag() & tcpflags::FIN > 0 {
-                socket.recv_param.next += 1;
-                socket.send_tcp_packet(
-                    socket.send_param.next,
-                    socket.recv_param.next,
-                    tcpflags::ACK,
-                    &[],
-                )?;
-                self.publish_event(socket.get_sock_id(), TCPEventKind::ConnectionClosed);
-            }
-        }
-        Ok(())
-    }
-
-    fn finwait2_handler(&self, socket: &mut Socket, packet: &TCPPacket) -> Result<()> {
-        dbg!("FinWait2 handler");
-        if socket.send_param.unacked_seq < packet.get_ack()
-            && packet.get_ack() <= socket.send_param.next
-        {
-            socket.send_param.unacked_seq = packet.get_ack();
-            self.delete_acked_segment_from_retransmission_queue(socket);
-        } else if socket.send_param.next < packet.get_ack() {
-            // 未送信セグメントに対するackは破棄
-            return Ok(());
-        }
-        if packet.get_flag() & tcpflags::ACK == 0 {
-            // ACKが立っていないパケットは破棄
-            return Ok(());
-        }
-        if !packet.payload().is_empty() {
-            self.process_payload(socket, &packet)?;
+            dbg!("status: finwait1 ->", &socket.status);
         }
 
         if packet.get_flag() & tcpflags::FIN > 0 {
+            // 本来はCLOSING stateも考慮する必要があるが省略
             socket.recv_param.next += 1;
             socket.send_tcp_packet(
                 socket.send_param.next,
