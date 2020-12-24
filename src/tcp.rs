@@ -7,6 +7,7 @@ use pnet::transport::{self, TransportChannelType};
 use rand::{rngs::ThreadRng, Rng};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
+use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockWriteGuard};
 use std::time::{Duration, SystemTime};
 use std::{cmp, ops::Range, str, thread};
@@ -634,7 +635,6 @@ impl TCP {
 /// 宛先IPアドレスに対する送信元インタフェースのIPアドレスを取得する
 /// Ubuntu18.04で動作を確認．OSによって挙動が変わるかも
 fn get_source_addr_to(addr: Ipv4Addr) -> Result<Ipv4Addr> {
-    use std::process::Command;
     let output = Command::new("sh")
         .arg("-c")
         .arg(format!(
