@@ -36,3 +36,7 @@ sudo ip netns exec router sysctl -w net.ipv4.ip_forward=1
 # drop RST
 sudo ip netns exec host1 sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
 sudo ip netns exec host2 sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
+
+# turn off checksum offloading
+sudo ip netns exec host2 sudo ethtool -K host2-veth1 tx off
+sudo ip netns exec host1 sudo ethtool -K host1-veth1 tx off
