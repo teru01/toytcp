@@ -67,6 +67,7 @@ impl TCP {
     /// タイマースレッド用の関数
     /// 全てのソケットの再送キューを見て，タイムアウトしているパケットを再送する
     fn timer(&self) {
+        dbg!("begin timer thread");
         loop {
             let mut table = self.sockets.write().unwrap();
             for (_, socket) in table.iter_mut() {

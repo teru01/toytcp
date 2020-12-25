@@ -160,10 +160,11 @@ impl Socket {
             .context(format!("failed to send: \n{:?}", tcp_packet))?;
 
         dbg!("sent", &tcp_packet);
-        if !payload.is_empty() || tcp_packet.get_flag() != tcpflags::ACK {
-            self.retransmission_queue
-                .push_back(RetransmissionQueueEntry::new(tcp_packet));
+        if payload.is_empty() && tcp_packet.get_flag() == tcpflags::ACK {
+            return Ok(sent_size);
         }
+        self.retransmission_queue
+            .push_back(RetransmissionQueueEntry::new(tcp_packet));
         Ok(sent_size)
     }
 
