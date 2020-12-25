@@ -372,7 +372,7 @@ impl TCP {
             }
             let sock_id = socket.get_sock_id();
             if let Err(error) = match socket.status {
-                TcpStatus::Listen => self.listen_handler(table, sock_id, &packet, remote_addr),
+                TcpStatus::Listen => self.listen_handler(sock_id, &packet, remote_addr),
                 TcpStatus::SynRcvd => self.synrcvd_handler(table, sock_id, &packet),
                 TcpStatus::SynSent => self.synsent_handler(socket, &packet),
                 TcpStatus::Established => self.established_handler(socket, &packet),
@@ -391,7 +391,7 @@ impl TCP {
     /// LISTEN状態のソケットに到着したパケットの処理
     fn listen_handler(
         &self,
-        mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
+        // mut table: RwLockWriteGuard<HashMap<SockID, Socket>>,
         listening_socket_id: SockID,
         packet: &TCPPacket,
         remote_addr: Ipv4Addr,
@@ -401,7 +401,8 @@ impl TCP {
             // 本来ならRSTをsendする
             return Ok(());
         }
-        let listening_socket = table.get_mut(&listening_socket_id).unwrap();
+        let mut table2 = self.sockets;
+        let listening_socket = table2.get_mut(&listening_socket_id).unwrap();
         if packet.get_flag() & tcpflags::SYN > 0 {
             // passive openの処理
             // 後に接続済みソケットとなるソケットを新たに生成する
@@ -426,7 +427,7 @@ impl TCP {
             connection_socket.send_param.unacked_seq = connection_socket.send_param.initial_seq;
             connection_socket.listening_socket = Some(listening_socket.get_sock_id());
             dbg!("status: listen -> ", &connection_socket.status);
-            table.insert(connection_socket.get_sock_id(), connection_socket);
+            table2.insert(connection_socket.get_sock_id(), connection_socket);
         }
         Ok(())
     }
@@ -633,7 +634,7 @@ impl TCP {
 }
 
 /// 宛先IPアドレスに対する送信元インタフェースのIPアドレスを取得する
-/// Ubuntu18.04で動作を確認．OSによって挙動が変わるかも
+/// iproute2-ss180129で動作を確認．バージョンによって挙動が変わるかも
 fn get_source_addr_to(addr: Ipv4Addr) -> Result<Ipv4Addr> {
     let output = Command::new("sh")
         .arg("-c")
