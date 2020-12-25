@@ -184,7 +184,7 @@ impl TCP {
 
     /// データをバッファに読み込んで，読み込んだサイズを返す．FINを読み込んだ場合は0を返す
     /// パケットが届くまでブロックする
-    pub fn receive(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
+    pub fn recv(&self, sock_id: SockID, buffer: &mut [u8]) -> Result<usize> {
         let mut table = self.sockets.write().unwrap();
         let mut socket = table
             .get_mut(&sock_id)
@@ -242,6 +242,7 @@ impl TCP {
                     cmp::min(socket.send_param.window as usize, buffer.len() - cursor),
                 );
             }
+            dbg!("current window size", socket.send_param.window);
             socket.send_tcp_packet(
                 socket.send_param.next,
                 socket.recv_param.next,

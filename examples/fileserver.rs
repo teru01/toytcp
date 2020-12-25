@@ -21,7 +21,7 @@ fn file_server(local_addr: Ipv4Addr, local_port: u16, savepath: &str) -> Result<
         let mut v = Vec::new();
         let mut buffer = [0u8; 2000];
         loop {
-            let nbytes = tcp.receive(connected_socket, &mut buffer).unwrap();
+            let nbytes = tcp.recv(connected_socket, &mut buffer).unwrap();
             if nbytes == 0 {
                 dbg!("closing connection...");
                 tcp.close(connected_socket).unwrap();

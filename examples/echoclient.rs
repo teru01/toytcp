@@ -25,7 +25,7 @@ fn echo_client(remote_addr: Ipv4Addr, remote_port: u16) -> Result<()> {
         tcp.send(sock_id, input.as_bytes())?;
 
         let mut buffer = vec![0; 1500];
-        let n = tcp.receive(sock_id, &mut buffer)?;
+        let n = tcp.recv(sock_id, &mut buffer)?;
         print!("> {}", str::from_utf8(&buffer[..n])?);
     }
 }
