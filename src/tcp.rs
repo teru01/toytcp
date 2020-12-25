@@ -70,7 +70,7 @@ impl TCP {
         dbg!("begin timer thread");
         loop {
             let mut table = self.sockets.write().unwrap();
-            for (_, socket) in table.iter_mut() {
+            for (sock_id, socket) in table.iter_mut() {
                 while let Some(mut item) = socket.retransmission_queue.pop_front() {
                     // 再送キューからackされたセグメントを除去する
                     // established state以外の時に送信されたセグメントを除去するために必要
@@ -78,14 +78,11 @@ impl TCP {
                         // ackされてる
                         dbg!("successfully acked", item.packet.get_seq());
                         socket.send_param.window += item.packet.payload().len() as u16;
-                        self.publish_event(socket.get_sock_id(), TCPEventKind::Acked);
+                        self.publish_event(*sock_id, TCPEventKind::Acked);
                         if item.packet.get_flag() & tcpflags::FIN > 0
                             && socket.status == TcpStatus::LastAck
                         {
-                            self.publish_event(
-                                socket.get_sock_id(),
-                                TCPEventKind::ConnectionClosed,
-                            );
+                            self.publish_event(*sock_id, TCPEventKind::ConnectionClosed);
                         }
                         continue;
                     }
