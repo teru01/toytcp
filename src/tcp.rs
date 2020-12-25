@@ -110,6 +110,13 @@ impl TCP {
                         break;
                     } else {
                         dbg!("reached MAX_TRANSMITTION");
+                        if item.packet.get_flag() & tcpflags::FIN > 0
+                            && (socket.status == TcpStatus::LastAck
+                                || socket.status == TcpStatus::FinWait1
+                                || socket.status == TcpStatus::FinWait2)
+                        {
+                            self.publish_event(*sock_id, TCPEventKind::ConnectionClosed);
+                        }
                     }
                 }
             }
@@ -206,7 +213,6 @@ impl TCP {
                 .context(format!("no such socket: {:?}", sock_id))?;
             received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
         }
-        let received_size = socket.recv_buffer.len() - socket.recv_param.window as usize;
         let copy_size = cmp::min(buffer.len(), received_size);
         buffer[..copy_size].copy_from_slice(&socket.recv_buffer[..copy_size]);
         socket.recv_buffer.copy_within(copy_size.., 0);
