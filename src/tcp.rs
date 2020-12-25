@@ -633,7 +633,7 @@ impl TCP {
 }
 
 /// 宛先IPアドレスに対する送信元インタフェースのIPアドレスを取得する
-/// Ubuntu18.04で動作を確認．OSによって挙動が変わるかも
+/// iproute2-ss180129で動作を確認．バージョンによって挙動が変わるかも
 fn get_source_addr_to(addr: Ipv4Addr) -> Result<Ipv4Addr> {
     let output = Command::new("sh")
         .arg("-c")
