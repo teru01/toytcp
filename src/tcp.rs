@@ -642,12 +642,17 @@ impl TCP {
 fn get_source_addr_to(addr: Ipv4Addr) -> Result<Ipv4Addr> {
     let output = Command::new("sh")
         .arg("-c")
-        .arg(format!(
-            "ip route get {}| awk 'match($0, /src (([0-9]|\\.)*) /, a){{print a[1]}}'",
-            addr
-        ))
+        .arg(format!("ip route get {} | grep src", addr))
         .output()?;
-    let ip = str::from_utf8(&output.stdout)?.trim();
+    let mut output = str::from_utf8(&output.stdout)?
+        .trim()
+        .split_ascii_whitespace();
+    while let Some(s) = output.next() {
+        if s == "src" {
+            break;
+        }
+    }
+    let ip = output.next().context("failed to get src ip")?;
     dbg!("source addr", ip);
     ip.parse().context("failed to parse source ip")
 }
