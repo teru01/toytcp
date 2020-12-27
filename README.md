@@ -10,7 +10,7 @@ $ chmod +x setup.sh
 $ ./setup.sh
 ```
 
-The following virtual network environment will be created.
+The following virtual network environment will be created. Only Linux is supported for now.
 
 ![](./network.png)
 
