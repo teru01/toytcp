@@ -10,12 +10,11 @@ $ chmod +x setup.sh
 $ ./setup.sh
 ```
 
-次のような構成になる
-```
-[host1-veth1]--router--[host2-veth1]
-```
+The following virtual network environment will be created.
 
-カーネルが持つプロトコルスタックとの競合を避けるため，RSTフラグを持つすべてのパケットはiptablesにより破棄される設定になっている．
+![](./network.png)
+
+In order to avoid conflicts with the kernel's protocol stack, all packets with the RST flag are set to be discarded by iptables.
 
 
 # build & run 
@@ -28,7 +27,7 @@ $ cargo build --examples
 
 server
 ```
-$ sudo ip netns exec host1 sudo ./target/debug/examples/echoserver 10.0.0.1 30000
+$ sudo ip netns exec host1 ./target/debug/examples/echoserver 10.0.0.1 30000
 ```
 
 client
@@ -40,25 +39,23 @@ $ sudo ip netns exec host2 sudo ./target/debug/examples/echoclient 10.0.0.1 3000
 
 server
 ```
-$ sudo ip netns exec host1 sudo ./target/debug/examples/fileserver 10.0.0.1 30000 <save file name>
+$ sudo ip netns exec host2 ./target/debug/examples/fileserver 10.0.1.1 40000 <save file name>
 ```
 
 client
 ```
-$ sudo ip netns exec host2 sudo ./target/debug/examples/fileclient 10.0.0.1 30000 <send file name>
+$ sudo ip netns exec host1 ./target/debug/examples/fileclient 10.0.1.1 40000 sample.jpg
 ```
 
 ## simulate packet loss
 
-### 外向きパケットの0.1%を破棄する
+### Discard 0.1% of packets
 
 ```
-sudo ip netns exec host2 tc qdisc change dev host2-veth1 root netem loss 0.1%
+$ sudo ip netns exec router tc qdisc add dev router-veth2 root netem loss 0.1%
 ```
 
-この状態でファイル送信とかするとロスした時に再送される（はず）．止まるんじゃねぇぞ・・・
-
-### パケロス設定の削除
+Remember to turn off the settings when you're done experimenting.
 
 ```
 sudo ip netns exec host2 tc qdisc del dev host2-veth1 root
